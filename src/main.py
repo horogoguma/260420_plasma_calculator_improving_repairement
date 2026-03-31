@@ -3,7 +3,9 @@
 from PySpice.Unit import *
 
 from src.plasma import ChamberConditions, PlasmaCalculator, PlasmaConditions
+from src.plasma.constants import MM_TO_M
 from src.spice import SpiceSimulator
+
 
 
 def main() -> None:
@@ -16,15 +18,16 @@ def main() -> None:
     power = voltage * current
 
     chamber = ChamberConditions(
-        pressure_torr=7.5,
+        pressure_torr=3.5,
         temperature_k=423.0,
-        chamber_radius_m=0.170,
-        chamber_height_m=0.009,
+        chamber_radius_m=170 * MM_TO_M,
+        chamber_height_m=9 * MM_TO_M,
     )
     plasma_conditions = PlasmaConditions(
         electron_temperature_ev=1.5,
         sheath_voltage=441.0,
-        RF_power=1200.0,
+        RF_power=900.0,
+        RF_frequency=12.9e6,
     )
     plasma = PlasmaCalculator(
         chamber=chamber,
@@ -40,6 +43,7 @@ def main() -> None:
     sheath_voltage = plasma_conditions.sheath_voltage
     rf_power = plasma_conditions.RF_power
     rf_frequency = plasma_conditions.RF_frequency
+    pressure_torr = chamber.pressure_torr
     pressure_pa = chamber.pressure_pa
     temperature_k = chamber.temperature_k
     chamber_radius_m = chamber.chamber_radius_m
@@ -47,6 +51,14 @@ def main() -> None:
 
     print(f"Target value close to 1: {target_value} (iterations: {iterations})")
     print(f"Computed electron temperature: {electron_temperature_ev} eV")
+
+    number_need_to_be_one = plasma.compute_number_need_to_be_one(
+        electron_temperature_ev=electron_temperature_ev,
+        pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
+    )
 
     k_el = plasma.compute_elastic_collision_constant(
         electron_temperature_ev=electron_temperature_ev,
@@ -126,6 +138,7 @@ def main() -> None:
     plasma_resistance = plasma.compute_plasma_resistance(
         electron_temperature_ev=electron_temperature_ev,
         RF_power=rf_power,
+        RF_frequency=rf_frequency,
         sheath_voltage=sheath_voltage,
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
@@ -151,14 +164,27 @@ def main() -> None:
         chamber_height_m=chamber_height_m,
     )
 
-    number_need_to_be_one = plasma.compute_number_need_to_be_one(
+    plasma_coil_henry = plasma.compute_plasma_coil_henry(
         electron_temperature_ev=electron_temperature_ev,
+        RF_power=rf_power,
+        RF_frequency=rf_frequency,
+        sheath_voltage=sheath_voltage,
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
         pressure_pa=pressure_pa,
-        temperature_k=temperature_k,
+    )
+
+    plasma_cap_farad = plasma.compute_plasma_cap_farad(
+        electron_temperature_ev=electron_temperature_ev,
+        RF_power=rf_power,
+        RF_frequency=rf_frequency,
+        sheath_voltage=sheath_voltage,
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
     )
 
+    
+    print(f"Number that should be 1: {number_need_to_be_one}")
     print(f"Elastic collision constant: {k_el}")
     print(f"Excitation constant: {k_ex}")
     print(f"Debye length: {debye_length} m")
@@ -177,7 +203,9 @@ def main() -> None:
     print(f"Plasma resistance: {plasma_resistance} ohm")
     print(f"Plasma coil reactance: {plasma_coil_reactance} ohm")
     print(f"Plasma capacitive reactance: {plasma_cap_reactance} ohm")
-    print(f"Number that should be 1: {number_need_to_be_one}")
+    print(f"Plasma coil inductance: {plasma_coil_henry} H")
+    print(f"Plasma cap farad: {plasma_cap_farad} F")
+    
 
 
 if __name__ == "__main__":

@@ -3,10 +3,8 @@
 from dataclasses import dataclass
 from math import pi
 import math
-from pydoc import resolve
 
-TORR_TO_PA = 133.32236842105263
-MM_TO_M = 1e-3
+from .constants import MM_TO_M, TORR_TO_PA
 
 
 @dataclass(frozen=True)
@@ -611,6 +609,7 @@ class PlasmaCalculator:
         self,
         electron_temperature_ev: float | None = None,
         RF_power: float | None = None,
+        RF_frequency: int | None = None,
         sheath_voltage: float | None = None,
         chamber_radius_m: float | None = None,
         chamber_height_m: float | None = None,
@@ -621,6 +620,7 @@ class PlasmaCalculator:
             electron_temperature_ev
         )
         resolved_rf_power = self._resolved_rf_power(RF_power)
+        resolved_rf_frequency = self._resolved_rf_frequency(RF_frequency)
         resolved_sheath_voltage = self._resolved_sheath_voltage(sheath_voltage)
         resolved_chamber_radius_m = self._resolved_chamber_radius_m(chamber_radius_m)
         resolved_chamber_height_m = self._resolved_chamber_height_m(chamber_height_m)
@@ -628,13 +628,13 @@ class PlasmaCalculator:
         plasma_conductivity = self.compute_plasma_conductivity(
             resolved_electron_temperature_ev,
             resolved_rf_power,
-            self.RF_frequency,
+            resolved_rf_frequency,
             resolved_sheath_voltage,
             resolved_chamber_radius_m,
             resolved_chamber_height_m,
             resolved_pressure_pa,
         )
-        return resolved_chamber_radius_m / (
+        return resolved_chamber_height_m / (
             plasma_conductivity * pi * resolved_chamber_radius_m * resolved_chamber_radius_m
         )
     
@@ -667,7 +667,7 @@ class PlasmaCalculator:
             resolved_chamber_height_m,
             resolved_pressure_pa,
         )
-        return -1 * resolved_chamber_radius_m / (
+        return -1 * resolved_chamber_height_m / (
             (2 * pi * resolved_rf_frequency) * self.constants.vacuum_permittivity * plasma_relative_permittivity * pi * resolved_chamber_radius_m * resolved_chamber_radius_m
         )
     
@@ -690,6 +690,62 @@ class PlasmaCalculator:
         resolved_chamber_radius_m = self._resolved_chamber_radius_m(chamber_radius_m)
         resolved_chamber_height_m = self._resolved_chamber_height_m(chamber_height_m)
         
-        return -1 * resolved_chamber_radius_m / (
+        return -1 * resolved_chamber_height_m / (
             (2 * pi * resolved_rf_frequency) * self.constants.vacuum_permittivity * pi * resolved_chamber_radius_m * resolved_chamber_radius_m
         )
+    
+    def compute_plasma_coil_henry(
+        self,
+        electron_temperature_ev: float | None = None,
+        RF_power: float | None = None,
+        RF_frequency: int | None = None,
+        sheath_voltage: float | None = None,
+        chamber_radius_m: float | None = None,
+        chamber_height_m: float | None = None,
+        pressure_pa: float | None = None,
+    ) -> float:
+        """Return plasma resistance from plasma conductivity and effective length."""
+        resolved_electron_temperature_ev = self._resolved_electron_temperature_ev(
+            electron_temperature_ev
+        )
+        resolved_rf_power = self._resolved_rf_power(RF_power)
+        resolved_rf_frequency = self._resolved_rf_frequency(RF_frequency)
+        resolved_sheath_voltage = self._resolved_sheath_voltage(sheath_voltage)
+        resolved_chamber_radius_m = self._resolved_chamber_radius_m(chamber_radius_m)
+        resolved_chamber_height_m = self._resolved_chamber_height_m(chamber_height_m)
+        resolved_pressure_pa = self._resolved_pressure_pa(pressure_pa)
+        plasma_relative_permittivity = self.compute_plasma_relative_permittivity(
+            resolved_electron_temperature_ev,
+            resolved_rf_power,
+            self.RF_frequency,
+            resolved_sheath_voltage,
+            resolved_chamber_radius_m,
+            resolved_chamber_height_m,
+            resolved_pressure_pa,
+        )
+        return -1 * resolved_chamber_height_m / (
+            (2 * pi * resolved_rf_frequency) * (2 * pi * resolved_rf_frequency) * self.constants.vacuum_permittivity * plasma_relative_permittivity * pi * resolved_chamber_radius_m * resolved_chamber_radius_m
+        )
+
+    def compute_plasma_cap_farad(
+        self,
+        electron_temperature_ev: float | None = None,
+        RF_power: float | None = None,
+        RF_frequency: int | None = None,
+        sheath_voltage: float | None = None,
+        chamber_radius_m: float | None = None,
+        chamber_height_m: float | None = None,
+    ) -> float:
+        """Return plasma resistance from plasma conductivity and effective length."""
+        resolved_electron_temperature_ev = self._resolved_electron_temperature_ev(
+            electron_temperature_ev
+        )
+        resolved_rf_power = self._resolved_rf_power(RF_power)
+        resolved_rf_frequency = self._resolved_rf_frequency(RF_frequency)
+        resolved_sheath_voltage = self._resolved_sheath_voltage(sheath_voltage)
+        resolved_chamber_radius_m = self._resolved_chamber_radius_m(chamber_radius_m)
+        resolved_chamber_height_m = self._resolved_chamber_height_m(chamber_height_m)
+        
+        return (
+            self.constants.vacuum_permittivity * pi * resolved_chamber_radius_m * resolved_chamber_radius_m
+        ) / resolved_chamber_height_m
