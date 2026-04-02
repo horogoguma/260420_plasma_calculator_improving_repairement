@@ -13,19 +13,29 @@ def main() -> None:
     sim.build_rc_lowpass(1 @ u_kOhm, 1 @ u_uF)
     analysis = sim.run_ac(1 @ u_Hz, 1 @ u_MHz, points=20)
 
-    voltage = float(analysis.n2[0])
+    voltage = complex(analysis.n2[0])
     current = voltage / float(sim.R.resistance)
     power = voltage * current
+
+    # chamber conditions 내부에 선언하면 다른 변수에 접근할 수 없어서 chamber condtions 밖에 선언
+    # ChamberConditions 밖에서 먼저 변수 선언
+    chamber_radius_m = 170 * MM_TO_M
+    chamber_height_m = 9 * MM_TO_M
 
     chamber = ChamberConditions(
         pressure_torr=3.5,
         temperature_k=423.0,
-        chamber_radius_m=170 * MM_TO_M,
-        chamber_height_m=9 * MM_TO_M,
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
+        electrode_area_m2=3.14 * (chamber_radius_m) ** 2,
+        grounded_area_m2=3.14 * (chamber_radius_m) ** 2
+        + 2 * 3.14 * chamber_radius_m * chamber_height_m,
     )
+
     plasma_conditions = PlasmaConditions(
         electron_temperature_ev=1.5,
         sheath_voltage=441.0,
+        sheath_length_m=1.035 * MM_TO_M,
         RF_power=900.0,
         RF_frequency=12.9e6,
     )
@@ -38,16 +48,23 @@ def main() -> None:
     print(f"Computed impedance: {impedance} ohm")
     print(f"Computed power: {power} W")
 
-    electron_temperature_ev, iterations, target_value = plasma.solve_electron_temperature()
-    plasma.electron_temperature_ev = electron_temperature_ev
-    sheath_voltage = plasma_conditions.sheath_voltage
-    rf_power = plasma_conditions.RF_power
-    rf_frequency = plasma_conditions.RF_frequency
     pressure_torr = chamber.pressure_torr
     pressure_pa = chamber.pressure_pa
     temperature_k = chamber.temperature_k
     chamber_radius_m = chamber.chamber_radius_m
     chamber_height_m = chamber.chamber_height_m
+    sheath_voltage = plasma_conditions.sheath_voltage
+    rf_power = plasma_conditions.RF_power
+    rf_frequency = plasma_conditions.RF_frequency
+
+    electron_temperature_ev, iterations, target_value = plasma.solve_electron_temperature(
+        start_ev=plasma_conditions.electron_temperature_ev,
+        pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
+    )
+    plasma.electron_temperature_ev = electron_temperature_ev
 
     print(f"Target value close to 1: {target_value} (iterations: {iterations})")
     print(f"Computed electron temperature: {electron_temperature_ev} eV")
@@ -98,9 +115,13 @@ def main() -> None:
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
     )
+
+    d_ion = plasma.compute_ion_mean_free_path_m(pressure_torr=pressure_torr)
+
     f_collisional = plasma.compute_collisional_frequency(
         electron_temperature_ev=electron_temperature_ev,
         pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
     )
     w_pe = plasma.compute_plasma_angular_frequency(
         electron_temperature_ev=electron_temperature_ev,
@@ -117,6 +138,7 @@ def main() -> None:
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
         pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
     )
     relative_permittivity_pe = plasma.compute_plasma_relative_permittivity(
         electron_temperature_ev=electron_temperature_ev,
@@ -126,6 +148,7 @@ def main() -> None:
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
         pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
     )
     debye_length = plasma.compute_debye_length_m(
         electron_temperature_ev=electron_temperature_ev,
@@ -143,6 +166,7 @@ def main() -> None:
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
         pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
     )
 
     plasma_coil_reactance = plasma.compute_plasma_coil_reactance(
@@ -153,13 +177,11 @@ def main() -> None:
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
         pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
     )
 
     plasma_cap_reactance = plasma.compute_plasma_cap_reactance(
-        electron_temperature_ev=electron_temperature_ev,
-        RF_power=rf_power,
         RF_frequency=rf_frequency,
-        sheath_voltage=sheath_voltage,
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
     )
@@ -172,16 +194,62 @@ def main() -> None:
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
         pressure_pa=pressure_pa,
+        temperature_k=temperature_k,
     )
 
     plasma_cap_farad = plasma.compute_plasma_cap_farad(
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
+    )
+
+    plasma_sheath_capacitance = plasma.compute_plasma_sheath_capacitance(
+        sheath_thickness_m = plasma_conditions.sheath_length_m,
+    )
+
+    plasma_sheath_capacitance_electrode = plasma.compute_plasma_sheath_capacitance_electrode(
+        sheath_thickness_m = plasma_conditions.sheath_length_m,
+        chamber_radius_m = chamber.chamber_radius_m,
+    )
+
+    plasma_sheath_capacitance_grounded = plasma.compute_plasma_sheath_capacitance_grounded(
+        sheath_thickness_m = plasma_conditions.sheath_length_m,
+        chamber_radius_m = chamber.chamber_radius_m,
+        chamber_height_m = chamber.chamber_height_m,
+    )
+
+    u_e = plasma.compute_electron_velocity(electron_temperature_ev=electron_temperature_ev)
+
+    plasma_sheath_conductance = plasma.compute_plasma_sheath_conductance(
+        sheath_thickness_m = plasma_conditions.sheath_length_m,
+        pressure_torr = pressure_torr,
         electron_temperature_ev=electron_temperature_ev,
         RF_power=rf_power,
-        RF_frequency=rf_frequency,
         sheath_voltage=sheath_voltage,
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
     )
+
+    plasma_sheath_resistance_electrode = plasma.compute_plasma_sheath_resistance_electrode(
+        sheath_thickness_m = plasma_conditions.sheath_length_m,
+        pressure_torr = pressure_torr,
+        electron_temperature_ev=electron_temperature_ev,
+        RF_power=rf_power,
+        sheath_voltage=sheath_voltage,
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
+    )
+
+    plasma_sheath_resistance_grounded = plasma.compute_plasma_sheath_resistance_grounded(   
+        sheath_thickness_m = plasma_conditions.sheath_length_m,
+        pressure_torr = pressure_torr,
+        electron_temperature_ev=electron_temperature_ev,
+        RF_power=rf_power,
+        sheath_voltage=sheath_voltage,
+        chamber_radius_m=chamber_radius_m,
+        chamber_height_m=chamber_height_m,
+    )
+
+
 
     
     print(f"Number that should be 1: {number_need_to_be_one}")
@@ -196,6 +264,7 @@ def main() -> None:
     print(f"Electron-ion energy loss: {loss_electron_ion} eV")
     print(f"Total energy loss: {loss_total} eV")
     print(f"Plasma density: {n_e} m^-3")
+    print(f"Ion mean free path: {d_ion} m")
     print(f"Collisional frequency: {f_collisional} /s")
     print(f"Plasma angular frequency: {w_pe} rad/s")
     print(f"Plasma conductivity: {conductivity_pe} S/m")
@@ -205,6 +274,13 @@ def main() -> None:
     print(f"Plasma capacitive reactance: {plasma_cap_reactance} ohm")
     print(f"Plasma coil inductance: {plasma_coil_henry} H")
     print(f"Plasma cap farad: {plasma_cap_farad} F")
+    print(f"Plasma sheath capacitance: {plasma_sheath_capacitance} F/m^2")
+    print(f"Plasma sheath capacitance (electrode): {plasma_sheath_capacitance_electrode} F")
+    print(f"Plasma sheath capacitance (grounded): {plasma_sheath_capacitance_grounded} F")
+    print(f"Electron velocity: {u_e} m/s")
+    print(f"Plasma sheath conductance: {plasma_sheath_conductance} S/m^2")
+    print(f"Plasma sheath resistance (electrode): {plasma_sheath_resistance_electrode} ohm")
+    print(f"Plasma sheath resistance (grounded): {plasma_sheath_resistance_grounded} ohm")
     
 
 
