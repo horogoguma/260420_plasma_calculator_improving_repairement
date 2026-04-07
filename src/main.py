@@ -28,7 +28,8 @@ def main() -> None:
     plasma_conditions = PlasmaConditions(
         electron_temperature_ev=1.5,
         sheath_voltage=441.0,
-        sheath_length_m=1.035 * MM_TO_M,
+        sheath_length_electrode_m=1.035 * MM_TO_M,
+        sheath_length_grounded_m=1.035 * MM_TO_M,
         RF_power=900.0,
         RF_frequency=12.9e6,
     )
@@ -57,7 +58,16 @@ def main() -> None:
         f"(iterations: {coupled_result.iterations}, "
         f"relative sheath change: {coupled_result.sheath_length_relative_change})"
     )
-    print(f"Self-consistent sheath length: {coupled_result.sheath_length_m} m")
+    print(f"Self-consistent electrode sheath length: {coupled_result.sheath_length_electrode_m} m")
+    print(f"Self-consistent grounded sheath length: {coupled_result.sheath_length_grounded_m} m")
+    
+    bulk_plasma_height_m = (
+        chamber_height_m 
+        - coupled_result.sheath_length_electrode_m 
+        - coupled_result.sheath_length_grounded_m
+    )
+    print(f"Bulk plasma height: {bulk_plasma_height_m} m")
+
     print(
         "Self-consistent current density: "
         f"{coupled_result.current_density_a_per_m2} A/m^2"

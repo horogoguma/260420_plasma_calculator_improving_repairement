@@ -54,7 +54,8 @@ class PlasmaConditions:
 
     electron_temperature_ev: float = 2.0
     sheath_voltage: float = 100.0
-    sheath_length_m: float = 1.0354 * MM_TO_M
+    sheath_length_electrode_m: float = 1.0354 * MM_TO_M
+    sheath_length_grounded_m: float = 1.0354 * MM_TO_M
     RF_power: float = 1000.0
     RF_frequency: int = 12_900_000
     Current_density: float = 100.0
@@ -169,7 +170,16 @@ class PlasmaCalculator:
         sheath_voltage = conditions.sheath_voltage
         rf_power = conditions.RF_power
         rf_frequency = conditions.RF_frequency
-        sheath_length_m = conditions.sheath_length_m
+        
+        sheath_length_electrode_m = conditions.sheath_length_electrode_m
+        sheath_length_grounded_m = conditions.sheath_length_grounded_m
+        
+        # Calculate bulk plasma height
+        bulk_height_m = self.compute_bulk_plasma_height(
+            chamber_height_m,
+            sheath_length_electrode_m,
+            sheath_length_grounded_m,
+        )
 
         electron_temperature_ev, iterations, target_value = (
             self.solve_electron_temperature(
@@ -187,7 +197,7 @@ class PlasmaCalculator:
             pressure_pa=pressure_pa,
             temperature_k=temperature_k,
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
         )
         elastic_collision_constant = self.compute_elastic_collision_constant(
             electron_temperature_ev=electron_temperature_ev,
@@ -207,7 +217,7 @@ class PlasmaCalculator:
         )
         effective_length = self.compute_effective_length(
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
         )
         collision_energy_loss = self.compute_collision_energy_loss(
             electron_temperature_ev=electron_temperature_ev,
@@ -225,7 +235,7 @@ class PlasmaCalculator:
             RF_power=rf_power,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
         )
         ion_mean_free_path_m = self.compute_ion_mean_free_path_m(
             pressure_torr=pressure_torr,
@@ -240,7 +250,7 @@ class PlasmaCalculator:
             RF_power=rf_power,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
         )
         plasma_conductivity = self.compute_plasma_conductivity(
             electron_temperature_ev=electron_temperature_ev,
@@ -248,7 +258,7 @@ class PlasmaCalculator:
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
             pressure_pa=pressure_pa,
             temperature_k=temperature_k,
         )
@@ -258,7 +268,7 @@ class PlasmaCalculator:
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
             pressure_pa=pressure_pa,
             temperature_k=temperature_k,
         )
@@ -267,8 +277,9 @@ class PlasmaCalculator:
             RF_power=rf_power,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
-            chamber_height_m=chamber_height_m,
+            chamber_height_m=bulk_height_m,
         )
+
         plasma_resistance = self.compute_plasma_resistance(
             electron_temperature_ev=electron_temperature_ev,
             RF_power=rf_power,
@@ -278,6 +289,8 @@ class PlasmaCalculator:
             chamber_height_m=chamber_height_m,
             pressure_pa=pressure_pa,
             temperature_k=temperature_k,
+            sheath_length_electrode_m=sheath_length_electrode_m,
+            sheath_length_grounded_m=sheath_length_grounded_m,
         )
         plasma_coil_reactance = self.compute_plasma_coil_reactance(
             electron_temperature_ev=electron_temperature_ev,
@@ -288,11 +301,15 @@ class PlasmaCalculator:
             chamber_height_m=chamber_height_m,
             pressure_pa=pressure_pa,
             temperature_k=temperature_k,
+            sheath_length_electrode_m=sheath_length_electrode_m,
+            sheath_length_grounded_m=sheath_length_grounded_m,
         )
         plasma_cap_reactance = self.compute_plasma_cap_reactance(
             RF_frequency=rf_frequency,
             chamber_radius_m=chamber_radius_m,
             chamber_height_m=chamber_height_m,
+            sheath_length_electrode_m=sheath_length_electrode_m,
+            sheath_length_grounded_m=sheath_length_grounded_m,
         )
         plasma_coil_henry = self.compute_plasma_coil_henry(
             electron_temperature_ev=electron_temperature_ev,
@@ -303,23 +320,27 @@ class PlasmaCalculator:
             chamber_height_m=chamber_height_m,
             pressure_pa=pressure_pa,
             temperature_k=temperature_k,
+            sheath_length_electrode_m=sheath_length_electrode_m,
+            sheath_length_grounded_m=sheath_length_grounded_m,
         )
         plasma_cap_farad = self.compute_plasma_cap_farad(
             chamber_radius_m=chamber_radius_m,
             chamber_height_m=chamber_height_m,
+            sheath_length_electrode_m=sheath_length_electrode_m,
+            sheath_length_grounded_m=sheath_length_grounded_m,
         )
         plasma_sheath_capacitance = self.compute_plasma_sheath_capacitance(
-            sheath_thickness_m=sheath_length_m,
+            sheath_thickness_m=sheath_length_electrode_m,
         )
         plasma_sheath_capacitance_electrode = (
             self.compute_plasma_sheath_capacitance_electrode(
-                sheath_thickness_m=sheath_length_m,
+                sheath_thickness_m=sheath_length_electrode_m,
                 chamber_radius_m=chamber_radius_m,
             )
         )
         plasma_sheath_capacitance_grounded = (
             self.compute_plasma_sheath_capacitance_grounded(
-                sheath_thickness_m=sheath_length_m,
+                sheath_thickness_m=sheath_length_grounded_m,
                 chamber_radius_m=chamber_radius_m,
                 chamber_height_m=chamber_height_m,
             )
@@ -328,7 +349,7 @@ class PlasmaCalculator:
             electron_temperature_ev=electron_temperature_ev,
         )
         plasma_sheath_conductance = self.compute_plasma_sheath_conductance(
-            sheath_thickness_m=sheath_length_m,
+            sheath_thickness_m=sheath_length_electrode_m,
             pressure_torr=pressure_torr,
             electron_temperature_ev=electron_temperature_ev,
             RF_power=rf_power,
@@ -338,7 +359,7 @@ class PlasmaCalculator:
         )
         plasma_sheath_resistance_electrode = (
             self.compute_plasma_sheath_resistance_electrode(
-                sheath_thickness_m=sheath_length_m,
+                sheath_thickness_m=sheath_length_electrode_m,
                 pressure_torr=pressure_torr,
                 electron_temperature_ev=electron_temperature_ev,
                 RF_power=rf_power,
@@ -349,7 +370,7 @@ class PlasmaCalculator:
         )
         plasma_sheath_resistance_grounded = (
             self.compute_plasma_sheath_resistance_grounded(
-                sheath_thickness_m=sheath_length_m,
+                sheath_thickness_m=sheath_length_grounded_m,
                 pressure_torr=pressure_torr,
                 electron_temperature_ev=electron_temperature_ev,
                 RF_power=rf_power,
@@ -736,6 +757,81 @@ class PlasmaCalculator:
             / (plasma_density * self.constants.electron_charge * self.constants.electron_charge)
         ) ** 0.5
 
+    def compute_bulk_plasma_height(
+        self,
+        chamber_height_m: float,
+        sheath_length_electrode_m: float,
+        sheath_length_grounded_m: float,
+    ) -> float:
+        """Return the bulk plasma height inside the chamber.
+
+        The bulk plasma region is chamber height minus the sheath regions
+        at both the electrode and the grounded surfaces.
+        """
+        if chamber_height_m <= 0:
+            raise ValueError("Chamber height must be positive.")
+        if sheath_length_electrode_m < 0:
+            raise ValueError("Electrode sheath length must be non-negative.")
+        if sheath_length_grounded_m < 0:
+            raise ValueError("Grounded sheath length must be non-negative.")
+
+        bulk_height_m = (
+            chamber_height_m
+            - sheath_length_electrode_m
+            - sheath_length_grounded_m
+        )
+        if bulk_height_m <= 0:
+            raise ValueError(
+                "Bulk plasma height must be positive after subtracting both sheath lengths."
+            )
+        return bulk_height_m
+
+    def compute_plasma_sheath_length_electrode(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_voltage: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+    ) -> float:
+        """Return electrode sheath length from current density and plasma properties."""
+        return self.compute_plasma_sheath_length(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+
+    def compute_plasma_sheath_length_grounded(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_voltage: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+    ) -> float:
+        """Return grounded sheath length from current density and plasma properties."""
+        return self.compute_plasma_sheath_length(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+
     def compute_plasma_resistance(
         self,
         electron_temperature_ev: float,
@@ -746,8 +842,10 @@ class PlasmaCalculator:
         chamber_height_m: float,
         pressure_pa: float,
         temperature_k: float,
+        sheath_length_electrode_m: float,
+        sheath_length_grounded_m: float,
     ) -> float:
-        """Return plasma resistance from plasma conductivity and effective length."""
+        """Return plasma resistance from plasma conductivity and bulk plasma height."""
         plasma_conductivity = self.compute_plasma_conductivity(
             electron_temperature_ev,
             RF_power,
@@ -758,7 +856,12 @@ class PlasmaCalculator:
             pressure_pa,
             temperature_k,
         )
-        return chamber_height_m / (
+        bulk_height_m = self.compute_bulk_plasma_height(
+            chamber_height_m,
+            sheath_length_electrode_m,
+            sheath_length_grounded_m,
+        )
+        return bulk_height_m / (
             plasma_conductivity * pi * chamber_radius_m * chamber_radius_m
         )
     
@@ -772,8 +875,10 @@ class PlasmaCalculator:
         chamber_height_m: float,
         pressure_pa: float,
         temperature_k: float,
+        sheath_length_electrode_m: float,
+        sheath_length_grounded_m: float,
     ) -> float:
-        """Return plasma resistance from plasma conductivity and effective length."""
+        """Return plasma coil reactance from plasma permittivity and bulk height."""
         plasma_relative_permittivity = self.compute_plasma_relative_permittivity(
             electron_temperature_ev,
             RF_power,
@@ -784,8 +889,18 @@ class PlasmaCalculator:
             pressure_pa,
             temperature_k,
         )
-        return -1 * chamber_height_m / (
-            (2 * pi * RF_frequency) * self.constants.vacuum_permittivity * plasma_relative_permittivity * pi * chamber_radius_m * chamber_radius_m
+        bulk_height_m = self.compute_bulk_plasma_height(
+            chamber_height_m,
+            sheath_length_electrode_m,
+            sheath_length_grounded_m,
+        )
+        return -1 * bulk_height_m / (
+            (2 * pi * RF_frequency)
+            * self.constants.vacuum_permittivity
+            * plasma_relative_permittivity
+            * pi
+            * chamber_radius_m
+            * chamber_radius_m
         )
     
     def compute_plasma_cap_reactance(
@@ -793,10 +908,21 @@ class PlasmaCalculator:
         RF_frequency: int,
         chamber_radius_m: float,
         chamber_height_m: float,
+        sheath_length_electrode_m: float,
+        sheath_length_grounded_m: float,
     ) -> float:
-        """Return plasma resistance from plasma conductivity and effective length."""
-        return -1 * chamber_height_m / (
-            (2 * pi * RF_frequency) * self.constants.vacuum_permittivity * pi * chamber_radius_m * chamber_radius_m
+        """Return plasma capacitive reactance from bulk plasma height."""
+        bulk_height_m = self.compute_bulk_plasma_height(
+            chamber_height_m,
+            sheath_length_electrode_m,
+            sheath_length_grounded_m,
+        )
+        return -1 * bulk_height_m / (
+            (2 * pi * RF_frequency)
+            * self.constants.vacuum_permittivity
+            * pi
+            * chamber_radius_m
+            * chamber_radius_m
         )
     
     def compute_plasma_coil_henry(
@@ -809,8 +935,10 @@ class PlasmaCalculator:
         chamber_height_m: float,
         pressure_pa: float,
         temperature_k: float,
+        sheath_length_electrode_m: float,
+        sheath_length_grounded_m: float,
     ) -> float:
-        """Return plasma resistance from plasma conductivity and effective length."""
+        """Return plasma coil inductance from plasma permittivity and bulk height."""
         plasma_relative_permittivity = self.compute_plasma_relative_permittivity(
             electron_temperature_ev,
             RF_power,
@@ -821,19 +949,37 @@ class PlasmaCalculator:
             pressure_pa,
             temperature_k,
         )
-        return -1 * chamber_height_m / (
-            (2 * pi * RF_frequency) * (2 * pi * RF_frequency) * self.constants.vacuum_permittivity * plasma_relative_permittivity * pi * chamber_radius_m * chamber_radius_m
+        bulk_height_m = self.compute_bulk_plasma_height(
+            chamber_height_m,
+            sheath_length_electrode_m,
+            sheath_length_grounded_m,
+        )
+        return -1 * bulk_height_m / (
+            (2 * pi * RF_frequency)
+            * (2 * pi * RF_frequency)
+            * self.constants.vacuum_permittivity
+            * plasma_relative_permittivity
+            * pi
+            * chamber_radius_m
+            * chamber_radius_m
         )
 
     def compute_plasma_cap_farad(
         self,
         chamber_radius_m: float,
         chamber_height_m: float,
+        sheath_length_electrode_m: float,
+        sheath_length_grounded_m: float,
     ) -> float:
-        """Return plasma resistance from plasma conductivity and effective length."""
+        """Return plasma capacitance from bulk plasma height."""
+        bulk_height_m = self.compute_bulk_plasma_height(
+            chamber_height_m,
+            sheath_length_electrode_m,
+            sheath_length_grounded_m,
+        )
         return (
             self.constants.vacuum_permittivity * pi * chamber_radius_m * chamber_radius_m
-        ) / chamber_height_m
+        ) / bulk_height_m
     
     def compute_plasma_sheath_capacitance(
             self,
