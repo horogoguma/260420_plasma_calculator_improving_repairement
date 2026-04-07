@@ -60,6 +60,44 @@ class PlasmaConditions:
     Current_density: float = 100.0
 
 
+@dataclass(frozen=True)
+class PlasmaComputationResult:
+    """Aggregated plasma calculation outputs for a single operating point."""
+
+    electron_temperature_ev: float
+    electron_temperature_iterations: int
+    electron_temperature_target_value: float
+    number_need_to_be_one: float
+    elastic_collision_constant: float
+    excitation_constant: float
+    ionization_constant: float
+    bohm_velocity: float
+    gas_number_density: float
+    effective_length: float
+    collision_energy_loss: float
+    electron_ion_energy_loss: float
+    total_energy_loss: float
+    plasma_density: float
+    ion_mean_free_path_m: float
+    collisional_frequency: float
+    plasma_angular_frequency: float
+    plasma_conductivity: float
+    plasma_relative_permittivity: float
+    debye_length_m: float
+    plasma_resistance: float
+    plasma_coil_reactance: float
+    plasma_cap_reactance: float
+    plasma_coil_henry: float
+    plasma_cap_farad: float
+    plasma_sheath_capacitance: float
+    plasma_sheath_capacitance_electrode: float
+    plasma_sheath_capacitance_grounded: float
+    electron_velocity: float
+    plasma_sheath_conductance: float
+    plasma_sheath_resistance_electrode: float
+    plasma_sheath_resistance_grounded: float
+
+
 class PlasmaCalculator:
     """Container for plasma-side calculations."""
 
@@ -108,6 +146,253 @@ class PlasmaCalculator:
     @RF_frequency.setter
     def RF_frequency(self, value: int) -> None:
         self.plasma_conditions.RF_frequency = value
+
+    def compute_plasma_properties(
+        self,
+        chamber: ChamberConditions | None = None,
+        plasma_conditions: PlasmaConditions | None = None,
+    ) -> PlasmaComputationResult:
+        """Compute the plasma-side operating point from the provided conditions."""
+        if chamber is not None:
+            self.chamber = chamber
+        if plasma_conditions is not None:
+            self.plasma_conditions = plasma_conditions
+
+        chamber = self.chamber
+        conditions = self.plasma_conditions
+
+        pressure_torr = chamber.pressure_torr
+        pressure_pa = chamber.pressure_pa
+        temperature_k = chamber.temperature_k
+        chamber_radius_m = chamber.chamber_radius_m
+        chamber_height_m = chamber.chamber_height_m
+        sheath_voltage = conditions.sheath_voltage
+        rf_power = conditions.RF_power
+        rf_frequency = conditions.RF_frequency
+        sheath_length_m = conditions.sheath_length_m
+
+        electron_temperature_ev, iterations, target_value = (
+            self.solve_electron_temperature(
+                start_ev=conditions.electron_temperature_ev,
+                pressure_pa=pressure_pa,
+                temperature_k=temperature_k,
+                chamber_radius_m=chamber_radius_m,
+                chamber_height_m=chamber_height_m,
+            )
+        )
+        self.electron_temperature_ev = electron_temperature_ev
+
+        number_need_to_be_one = self.compute_number_need_to_be_one(
+            electron_temperature_ev=electron_temperature_ev,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        elastic_collision_constant = self.compute_elastic_collision_constant(
+            electron_temperature_ev=electron_temperature_ev,
+        )
+        excitation_constant = self.compute_exitation_constant(
+            electron_temperature_ev=electron_temperature_ev,
+        )
+        ionization_constant = self.compute_ionization_constant(
+            electron_temperature_ev=electron_temperature_ev,
+        )
+        bohm_velocity = self.compute_bohm_velocity(
+            electron_temperature_ev=electron_temperature_ev,
+        )
+        gas_number_density = self.compute_gas_number_density(
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        effective_length = self.compute_effective_length(
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        collision_energy_loss = self.compute_collision_energy_loss(
+            electron_temperature_ev=electron_temperature_ev,
+        )
+        electron_ion_energy_loss = self.compute_electron_ion_energy_loss(
+            electron_temperature_ev=electron_temperature_ev,
+            sheath_voltage=sheath_voltage,
+        )
+        total_energy_loss = self.compute_total_energy_loss(
+            electron_temperature_ev=electron_temperature_ev,
+            sheath_voltage=sheath_voltage,
+        )
+        plasma_density = self.compute_plasma_density(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        ion_mean_free_path_m = self.compute_ion_mean_free_path_m(
+            pressure_torr=pressure_torr,
+        )
+        collisional_frequency = self.compute_collisional_frequency(
+            electron_temperature_ev=electron_temperature_ev,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        plasma_angular_frequency = self.compute_plasma_angular_frequency(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        plasma_conductivity = self.compute_plasma_conductivity(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            RF_frequency=rf_frequency,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        plasma_relative_permittivity = self.compute_plasma_relative_permittivity(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            RF_frequency=rf_frequency,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        debye_length_m = self.compute_debye_length_m(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        plasma_resistance = self.compute_plasma_resistance(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            RF_frequency=rf_frequency,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        plasma_coil_reactance = self.compute_plasma_coil_reactance(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            RF_frequency=rf_frequency,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        plasma_cap_reactance = self.compute_plasma_cap_reactance(
+            RF_frequency=rf_frequency,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        plasma_coil_henry = self.compute_plasma_coil_henry(
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            RF_frequency=rf_frequency,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_pa=pressure_pa,
+            temperature_k=temperature_k,
+        )
+        plasma_cap_farad = self.compute_plasma_cap_farad(
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        plasma_sheath_capacitance = self.compute_plasma_sheath_capacitance(
+            sheath_thickness_m=sheath_length_m,
+        )
+        plasma_sheath_capacitance_electrode = (
+            self.compute_plasma_sheath_capacitance_electrode(
+                sheath_thickness_m=sheath_length_m,
+                chamber_radius_m=chamber_radius_m,
+            )
+        )
+        plasma_sheath_capacitance_grounded = (
+            self.compute_plasma_sheath_capacitance_grounded(
+                sheath_thickness_m=sheath_length_m,
+                chamber_radius_m=chamber_radius_m,
+                chamber_height_m=chamber_height_m,
+            )
+        )
+        electron_velocity = self.compute_electron_velocity(
+            electron_temperature_ev=electron_temperature_ev,
+        )
+        plasma_sheath_conductance = self.compute_plasma_sheath_conductance(
+            sheath_thickness_m=sheath_length_m,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=rf_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+        plasma_sheath_resistance_electrode = (
+            self.compute_plasma_sheath_resistance_electrode(
+                sheath_thickness_m=sheath_length_m,
+                pressure_torr=pressure_torr,
+                electron_temperature_ev=electron_temperature_ev,
+                RF_power=rf_power,
+                sheath_voltage=sheath_voltage,
+                chamber_radius_m=chamber_radius_m,
+                chamber_height_m=chamber_height_m,
+            )
+        )
+        plasma_sheath_resistance_grounded = (
+            self.compute_plasma_sheath_resistance_grounded(
+                sheath_thickness_m=sheath_length_m,
+                pressure_torr=pressure_torr,
+                electron_temperature_ev=electron_temperature_ev,
+                RF_power=rf_power,
+                sheath_voltage=sheath_voltage,
+                chamber_radius_m=chamber_radius_m,
+                chamber_height_m=chamber_height_m,
+            )
+        )
+
+        return PlasmaComputationResult(
+            electron_temperature_ev=electron_temperature_ev,
+            electron_temperature_iterations=iterations,
+            electron_temperature_target_value=target_value,
+            number_need_to_be_one=number_need_to_be_one,
+            elastic_collision_constant=elastic_collision_constant,
+            excitation_constant=excitation_constant,
+            ionization_constant=ionization_constant,
+            bohm_velocity=bohm_velocity,
+            gas_number_density=gas_number_density,
+            effective_length=effective_length,
+            collision_energy_loss=collision_energy_loss,
+            electron_ion_energy_loss=electron_ion_energy_loss,
+            total_energy_loss=total_energy_loss,
+            plasma_density=plasma_density,
+            ion_mean_free_path_m=ion_mean_free_path_m,
+            collisional_frequency=collisional_frequency,
+            plasma_angular_frequency=plasma_angular_frequency,
+            plasma_conductivity=plasma_conductivity,
+            plasma_relative_permittivity=plasma_relative_permittivity,
+            debye_length_m=debye_length_m,
+            plasma_resistance=plasma_resistance,
+            plasma_coil_reactance=plasma_coil_reactance,
+            plasma_cap_reactance=plasma_cap_reactance,
+            plasma_coil_henry=plasma_coil_henry,
+            plasma_cap_farad=plasma_cap_farad,
+            plasma_sheath_capacitance=plasma_sheath_capacitance,
+            plasma_sheath_capacitance_electrode=plasma_sheath_capacitance_electrode,
+            plasma_sheath_capacitance_grounded=plasma_sheath_capacitance_grounded,
+            electron_velocity=electron_velocity,
+            plasma_sheath_conductance=plasma_sheath_conductance,
+            plasma_sheath_resistance_electrode=plasma_sheath_resistance_electrode,
+            plasma_sheath_resistance_grounded=plasma_sheath_resistance_grounded,
+        )
 
     def compute_impedance(self, voltage: complex, current: complex) -> complex:
         """Return impedance from voltage and current."""
@@ -655,4 +940,54 @@ class PlasmaCalculator:
                 chamber_height_m
                 )
             )
+        )
+    
+    def compute_plasma_sheath_length(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_voltage: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+    ) -> float:
+        """Return sheath length from current density and plasma properties."""
+        if current_density_a_per_m2 <= 0:
+            raise ValueError("Current density must be positive.")
+        if rf_frequency_hz <= 0:
+            raise ValueError("RF frequency must be positive.")
+        if pressure_torr <= 0:
+            raise ValueError("Pressure must be positive.")
+
+        ion_mean_free_path_m = self.compute_ion_mean_free_path_m(pressure_torr)
+        debye_length_m = self.compute_debye_length_m(
+            electron_temperature_ev,
+            rf_power,
+            sheath_voltage,
+            chamber_radius_m,
+            chamber_height_m,
+        )
+        plasma_density = self.compute_plasma_density(
+            electron_temperature_ev,
+            rf_power,
+            sheath_voltage,
+            chamber_radius_m,
+            chamber_height_m,
+        )
+
+        omega_rf = 2 * pi * rf_frequency_hz
+        density_ratio = current_density_a_per_m2 / (
+            self.constants.electron_charge * omega_rf * plasma_density
+        )
+
+        return (
+            1.95
+            * (
+                ((2 * ion_mean_free_path_m)
+                / (pi * pi * debye_length_m * debye_length_m))
+                * density_ratio
+            ) ** 0.5
+            * density_ratio
         )

@@ -1,3 +1,3 @@
 """SPICE simulation package exports."""
 
-from .simulator import SpiceSimulator
+from .simulator import PlasmaCircuitParameters, PlasmaCircuitResult, SpiceSimulator
