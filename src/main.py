@@ -67,7 +67,8 @@ def main() -> None:
         "Coupled iteration converged: "
         f"{coupled_result.converged} "
         f"(iterations: {coupled_result.iterations}, "
-        f"relative sheath change: {coupled_result.sheath_length_relative_change})"
+        f"relative sheath change: {coupled_result.sheath_length_relative_change}, "
+        f"relative sheath voltage change: {coupled_result.sheath_voltage_relative_change})"
     )
     print(f"Self-consistent electrode sheath length: {coupled_result.sheath_length_electrode_m} m")
     print(f"Self-consistent grounded sheath length: {coupled_result.sheath_length_grounded_m} m")
@@ -98,6 +99,7 @@ def main() -> None:
     print(f"Collision energy loss: {plasma_result.collision_energy_loss} eV")
     print(f"Electron-ion energy loss: {plasma_result.electron_ion_energy_loss} eV")
     print(f"Total energy loss: {plasma_result.total_energy_loss} eV")
+    print(f"Plasma total sheath voltage: {plasma_result.sheath_voltage} V")
     print(f"Plasma density: {plasma_result.plasma_density} m^-3")
     print(f"Ion mean free path: {plasma_result.ion_mean_free_path_m} m")
     print(f"Collisional frequency: {plasma_result.collisional_frequency} /s")
@@ -128,11 +130,50 @@ def main() -> None:
         "Plasma sheath resistance (grounded): "
         f"{plasma_result.plasma_sheath_resistance_grounded} ohm"
     )
+    print(f"Plasma wall potential: {plasma_result.plasma_wall_potential} V")
     print(f"Plasma target power: {plasma_spice_result.target_power_w} W")
     print(f"Plasma source voltage peak: {plasma_spice_result.source_voltage_peak} V")
     print(f"Plasma source voltage rms: {plasma_spice_result.source_voltage_rms} V")
     print(f"Plasma voltage bias: {plasma_voltage_bias} V")
-    print(f"Plasma electrode sheath impedance: {plasma_spice_result.electrode_sheath_impedance} ohm")
+    plasma_bias_V_theta = plasma.compute_bias_V_theta(
+        current_density_a_per_m2=coupled_result.current_density_a_per_m2,
+        rf_frequency_hz=plasma_conditions.RF_frequency,
+        pressure_torr=chamber.pressure_torr,
+        electron_temperature_ev=plasma_result.electron_temperature_ev,
+        rf_power=plasma_conditions.RF_power,
+        sheath_length_m=coupled_result.sheath_length_electrode_m,
+        electrode_radius_m=plasma.compute_effective_electrode_radius_m(chamber),
+        chamber_radius_m=chamber.chamber_radius_m,
+        chamber_height_m=chamber.chamber_height_m,
+        rf_voltage=plasma_spice_result.source_voltage_peak,
+    )
+    print(f"Plasma bias V_theta: {plasma_bias_V_theta} rad")
+    plasma_voltage_sheath_grounded = plasma.compute_voltage_sheath_grounded(
+        current_density_a_per_m2=coupled_result.current_density_a_per_m2,
+        rf_frequency_hz=plasma_conditions.RF_frequency,
+        pressure_torr=chamber.pressure_torr,
+        electron_temperature_ev=plasma_result.electron_temperature_ev,
+        rf_power=plasma_conditions.RF_power,
+        sheath_length_m=coupled_result.sheath_length_grounded_m,
+        electrode_radius_m=plasma.compute_effective_electrode_radius_m(chamber),
+        chamber_radius_m=chamber.chamber_radius_m,
+        chamber_height_m=chamber.chamber_height_m,
+        rf_voltage=plasma_spice_result.source_voltage_peak,
+    )
+    print(f"Plasma voltage sheath grounded: {plasma_voltage_sheath_grounded} V")
+    plasma_voltage_sheath_electrode = plasma.compute_voltage_sheath_electrode(
+        current_density_a_per_m2=coupled_result.current_density_a_per_m2,
+        rf_frequency_hz=plasma_conditions.RF_frequency,
+        pressure_torr=chamber.pressure_torr,
+        electron_temperature_ev=plasma_result.electron_temperature_ev,
+        rf_power=plasma_conditions.RF_power,
+        sheath_length_m=coupled_result.sheath_length_electrode_m,
+        electrode_radius_m=plasma.compute_effective_electrode_radius_m(chamber),
+        chamber_radius_m=chamber.chamber_radius_m,
+        chamber_height_m=chamber.chamber_height_m,
+        rf_voltage=plasma_spice_result.source_voltage_peak,
+    )
+    print(f"Plasma voltage sheath electrode: {plasma_voltage_sheath_electrode} V")
     print(f"Plasma bulk impedance: {plasma_spice_result.bulk_plasma_impedance} ohm")
     print(f"Plasma grounded sheath impedance: {plasma_spice_result.grounded_sheath_impedance} ohm")
     print(f"Plasma total impedance: {plasma_spice_result.total_impedance} ohm")

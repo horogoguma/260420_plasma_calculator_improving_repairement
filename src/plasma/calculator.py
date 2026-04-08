@@ -69,6 +69,7 @@ class PlasmaConditions:
     RF_power: float = 1000.0
     RF_frequency: int = 12_900_000
     Current_density: float = 100.0
+    rf_voltage: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class PlasmaComputationResult:
     """Aggregated plasma calculation outputs for a single operating point."""
 
     electron_temperature_ev: float
+    sheath_voltage: float
     electron_temperature_iterations: int
     electron_temperature_target_value: float
     number_need_to_be_one: float
@@ -107,6 +109,7 @@ class PlasmaComputationResult:
     plasma_sheath_conductance: float
     plasma_sheath_resistance_electrode: float
     plasma_sheath_resistance_grounded: float
+    plasma_wall_potential: float
 
 
 class PlasmaCalculator:
@@ -202,6 +205,7 @@ class PlasmaCalculator:
             )
         )
         self.electron_temperature_ev = electron_temperature_ev
+        self.sheath_voltage = sheath_voltage
 
         number_need_to_be_one = self.compute_number_need_to_be_one(
             electron_temperature_ev=electron_temperature_ev,
@@ -392,9 +396,13 @@ class PlasmaCalculator:
                 chamber_height_m=chamber_height_m,
             )
         )
+        plasma_wall_potential = self.compute_plasma_wall_potential(
+            electron_temperature_ev=electron_temperature_ev,
+        )
 
         return PlasmaComputationResult(
             electron_temperature_ev=electron_temperature_ev,
+            sheath_voltage=sheath_voltage,
             electron_temperature_iterations=iterations,
             electron_temperature_target_value=target_value,
             number_need_to_be_one=number_need_to_be_one,
@@ -426,6 +434,7 @@ class PlasmaCalculator:
             plasma_sheath_conductance=plasma_sheath_conductance,
             plasma_sheath_resistance_electrode=plasma_sheath_resistance_electrode,
             plasma_sheath_resistance_grounded=plasma_sheath_resistance_grounded,
+            plasma_wall_potential=plasma_wall_potential,
         )
 
     def compute_impedance(self, voltage: complex, current: complex) -> complex:
@@ -1328,3 +1337,216 @@ class PlasmaCalculator:
         )
 
         return rf_voltage * math.sin((pi / 2) * area_ratio)
+
+    def compute_plasma_wall_potential(
+        self,
+        electron_temperature_ev: float,
+    ) -> float:
+        """Return plasma wall potential from electron temperature in eV."""
+        return electron_temperature_ev * math.log(((self.constants.argon_mass)/(2*pi*self.constants.electron_mass))**(1/2)) 
+
+    def compute_bias_V_theta(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_length_m: float,
+        electrode_radius_m: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+        rf_voltage: float,
+    ) -> float:
+        """Return bias V_theta from current density and plasma properties."""
+
+        voltage_bias = self.compute_plasma_voltage_bias(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+
+        plasma_wall_potential = self.compute_plasma_wall_potential(electron_temperature_ev)
+        
+        # Get magnitude of complex values
+        rf_voltage_magnitude = abs(rf_voltage)
+        voltage_bias_magnitude = abs(voltage_bias)
+        
+        # Calculate argument for acos
+        acos_arg = (voltage_bias_magnitude + plasma_wall_potential) / rf_voltage_magnitude
+        
+        # Validate that argument is in valid range [-1, 1]
+        if acos_arg < -1 or acos_arg > 1:
+            raise ValueError(
+                f"acos argument out of range: {acos_arg}. "
+                f"Valid range is [-1, 1]. "
+                f"voltage_bias magnitude={voltage_bias_magnitude}, plasma_wall_potential={plasma_wall_potential}, rf_voltage magnitude={rf_voltage_magnitude}"
+            )
+
+        return math.acos(acos_arg)
+
+    def compute_voltage_sheath_grounded(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_length_m: float,
+        electrode_radius_m: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+        rf_voltage: float,
+    ) -> float:
+        """Return grounded sheath voltage from plasma wall potential."""
+
+        voltage_bias = self.compute_plasma_voltage_bias(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+
+        plasma_wall_potential = self.compute_plasma_wall_potential(electron_temperature_ev)
+
+        V_theta = self.compute_bias_V_theta(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,                    
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+
+        # Get magnitude of complex values
+        voltage_bias_magnitude = abs(voltage_bias)
+        rf_voltage_magnitude = abs(rf_voltage)
+
+        return abs(-(V_theta / pi) * voltage_bias_magnitude 
+                + (plasma_wall_potential / pi) * (pi - V_theta)) + (rf_voltage_magnitude / pi) * math.sin(V_theta)
+
+    def compute_voltage_sheath_electrode(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_length_m: float,
+        electrode_radius_m: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+        rf_voltage: float,
+    ) -> float:
+        """Return electrode sheath voltage from plasma wall potential."""
+
+        voltage_bias = self.compute_plasma_voltage_bias(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+
+        plasma_wall_potential = self.compute_plasma_wall_potential(electron_temperature_ev)
+
+        V_theta = self.compute_bias_V_theta(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,                    
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+
+        # Get magnitude of complex values
+        voltage_bias_magnitude = abs(voltage_bias)
+        rf_voltage_magnitude = abs(rf_voltage)
+
+        return abs(
+            -((pi - V_theta) / pi) * voltage_bias_magnitude
+            - ((rf_voltage_magnitude / pi) * math.sin(V_theta))
+            + ((plasma_wall_potential / pi) * V_theta)
+        )
+
+    def compute_voltage_sheath_total_sum(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_length_m: float,
+        electrode_radius_m: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+        rf_voltage: float,
+    ) -> float:
+        """Return total sheath voltage from plasma wall potential."""
+        voltage_sheath_grounded = self.compute_voltage_sheath_grounded(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+        voltage_sheath_electrode = self.compute_voltage_sheath_electrode(
+            current_density_a_per_m2=current_density_a_per_m2,
+            rf_frequency_hz=rf_frequency_hz,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            rf_power=rf_power,
+            sheath_length_m=sheath_length_m,
+            electrode_radius_m=electrode_radius_m,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            rf_voltage=rf_voltage,
+        )
+
+        chamber = ChamberConditions(
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_torr=pressure_torr,
+            electrode_radius_m=electrode_radius_m,
+        )
+        electrode_area_m2 = self.compute_electrode_area_m2(chamber)
+        grounded_area_m2 = self.compute_grounded_area_m2(chamber)
+        total_area_m2 = electrode_area_m2 + grounded_area_m2
+
+        return (
+            voltage_sheath_grounded * (grounded_area_m2 / total_area_m2)
+            + voltage_sheath_electrode * (electrode_area_m2 / total_area_m2)
+        )
+
+        
