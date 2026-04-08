@@ -13,6 +13,7 @@ def main() -> None:
     # chamber conditions 내부에 선언하면 다른 변수에 접근할 수 없어서 chamber condtions 밖에 선언
     # ChamberConditions 밖에서 먼저 변수 선언
     chamber_radius_m = 170 * MM_TO_M
+    electrode_radius_m = 150 * MM_TO_M
     chamber_height_m = 9 * MM_TO_M
 
     chamber = ChamberConditions(
@@ -20,9 +21,7 @@ def main() -> None:
         temperature_k=423.0,
         chamber_radius_m=chamber_radius_m,
         chamber_height_m=chamber_height_m,
-        electrode_area_m2=3.14 * (chamber_radius_m) ** 2,
-        grounded_area_m2=3.14 * (chamber_radius_m) ** 2
-        + 2 * 3.14 * chamber_radius_m * chamber_height_m,
+        electrode_radius_m=electrode_radius_m,
     )
 
     plasma_conditions = PlasmaConditions(
@@ -46,6 +45,18 @@ def main() -> None:
     )
     plasma_result = coupled_result.plasma_result
     plasma_spice_result = coupled_result.circuit_result
+    plasma_voltage_bias = plasma.compute_plasma_voltage_bias(
+        current_density_a_per_m2=coupled_result.current_density_a_per_m2,
+        rf_frequency_hz=plasma_conditions.RF_frequency,
+        pressure_torr=chamber.pressure_torr,
+        electron_temperature_ev=plasma_result.electron_temperature_ev,
+        rf_power=plasma_conditions.RF_power,
+        sheath_length_m=coupled_result.sheath_length_electrode_m,
+        electrode_radius_m=plasma.compute_effective_electrode_radius_m(chamber),
+        chamber_radius_m=chamber.chamber_radius_m,
+        chamber_height_m=chamber.chamber_height_m,
+        rf_voltage=plasma_spice_result.source_voltage_peak,
+    )
 
     print(
         "Target value close to 1: "
@@ -60,6 +71,9 @@ def main() -> None:
     )
     print(f"Self-consistent electrode sheath length: {coupled_result.sheath_length_electrode_m} m")
     print(f"Self-consistent grounded sheath length: {coupled_result.sheath_length_grounded_m} m")
+    print(f"Electrode radius: {plasma.compute_effective_electrode_radius_m(chamber)} m")
+    print(f"Electrode area: {plasma.compute_electrode_area_m2(chamber)} m^2")
+    print(f"Grounded area: {plasma.compute_grounded_area_m2(chamber)} m^2")
     
     bulk_plasma_height_m = (
         chamber_height_m 
@@ -117,6 +131,7 @@ def main() -> None:
     print(f"Plasma target power: {plasma_spice_result.target_power_w} W")
     print(f"Plasma source voltage peak: {plasma_spice_result.source_voltage_peak} V")
     print(f"Plasma source voltage rms: {plasma_spice_result.source_voltage_rms} V")
+    print(f"Plasma voltage bias: {plasma_voltage_bias} V")
     print(f"Plasma electrode sheath impedance: {plasma_spice_result.electrode_sheath_impedance} ohm")
     print(f"Plasma bulk impedance: {plasma_spice_result.bulk_plasma_impedance} ohm")
     print(f"Plasma grounded sheath impedance: {plasma_spice_result.grounded_sheath_impedance} ohm")

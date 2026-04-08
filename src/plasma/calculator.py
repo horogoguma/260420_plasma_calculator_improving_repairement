@@ -24,12 +24,22 @@ class BasicConstants:
 class ChamberConditions:
     """Geometry and neutral-gas conditions for the reactor."""
 
-    chamber_height_m: float = 5.679328897 * MM_TO_M
-    chamber_radius_m: float = 238.438997 * MM_TO_M
-    pressure_torr: float = 3.5
-    temperature_k: float = 423.0
+    chamber_height_m: float | None = None
+    chamber_radius_m: float  | None = None
+    pressure_torr: float | None = None
+    temperature_k: float | None = None
+    electrode_radius_m: float | None = None
     electrode_area_m2: float | None = None
     grounded_area_m2: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.electrode_radius_m is not None and self.electrode_radius_m <= 0:
+            raise ValueError("Electrode radius must be positive.")
+        if (
+            self.electrode_radius_m is not None
+            and self.electrode_radius_m > self.chamber_radius_m
+        ):
+            raise ValueError("Electrode radius cannot exceed chamber radius.")
 
     @property
     def chamber_height_mm(self) -> float:
@@ -166,6 +176,7 @@ class PlasmaCalculator:
         pressure_pa = chamber.pressure_pa
         temperature_k = chamber.temperature_k
         chamber_radius_m = chamber.chamber_radius_m
+        electrode_radius_m = self.compute_effective_electrode_radius_m(chamber)
         chamber_height_m = chamber.chamber_height_m
         sheath_voltage = conditions.sheath_voltage
         rf_power = conditions.RF_power
@@ -335,12 +346,13 @@ class PlasmaCalculator:
         plasma_sheath_capacitance_electrode = (
             self.compute_plasma_sheath_capacitance_electrode(
                 sheath_thickness_m=sheath_length_electrode_m,
-                chamber_radius_m=chamber_radius_m,
+                electrode_radius_m=electrode_radius_m,
             )
         )
         plasma_sheath_capacitance_grounded = (
             self.compute_plasma_sheath_capacitance_grounded(
                 sheath_thickness_m=sheath_length_grounded_m,
+                electrode_radius_m=electrode_radius_m,
                 chamber_radius_m=chamber_radius_m,
                 chamber_height_m=chamber_height_m,
             )
@@ -364,7 +376,7 @@ class PlasmaCalculator:
                 electron_temperature_ev=electron_temperature_ev,
                 RF_power=rf_power,
                 sheath_voltage=sheath_voltage,
-                chamber_radius_m=chamber_radius_m,
+                electrode_radius_m=electrode_radius_m,
                 chamber_height_m=chamber_height_m,
             )
         )
@@ -375,6 +387,7 @@ class PlasmaCalculator:
                 electron_temperature_ev=electron_temperature_ev,
                 RF_power=rf_power,
                 sheath_voltage=sheath_voltage,
+                electrode_radius_m=electrode_radius_m,
                 chamber_radius_m=chamber_radius_m,
                 chamber_height_m=chamber_height_m,
             )
@@ -420,6 +433,71 @@ class PlasmaCalculator:
         if current == 0:
             raise ValueError("Current must be non-zero.")
         return voltage / current
+
+    def compute_effective_electrode_radius_m(
+        self,
+        chamber: ChamberConditions | None = None,
+    ) -> float:
+        """Return the effective electrode radius."""
+        chamber = chamber if chamber is not None else self.chamber
+        return (
+            chamber.electrode_radius_m
+            if chamber.electrode_radius_m is not None
+            else chamber.chamber_radius_m
+        )
+
+    def compute_electrode_area_m2(
+        self,
+        chamber: ChamberConditions | None = None,
+    ) -> float:
+        """Return the electrode area."""
+        chamber = chamber if chamber is not None else self.chamber
+        if chamber.electrode_area_m2 is not None:
+            return chamber.electrode_area_m2
+        electrode_radius_m = self.compute_effective_electrode_radius_m(chamber)
+        return pi * electrode_radius_m * electrode_radius_m
+
+    def compute_grounded_area_m2(
+        self,
+        chamber: ChamberConditions | None = None,
+    ) -> float:
+        """Return the grounded area."""
+        chamber = chamber if chamber is not None else self.chamber
+        if chamber.grounded_area_m2 is not None:
+            return chamber.grounded_area_m2
+        chamber_disk_area_m2 = pi * chamber.chamber_radius_m * chamber.chamber_radius_m
+        side_wall_area_m2 = 2 * pi * chamber.chamber_radius_m * chamber.chamber_height_m
+        exposed_bottom_area_m2 = (
+            chamber_disk_area_m2 - self.compute_electrode_area_m2(chamber)
+        )
+        return chamber_disk_area_m2 + side_wall_area_m2 + exposed_bottom_area_m2
+
+    def compute_current_density(
+        self,
+        current_a: float,
+        area_m2: float,
+    ) -> float:
+        """Return current density from current magnitude and area."""
+        if area_m2 <= 0:
+            raise ValueError("Area must be positive.")
+        return abs(current_a) / area_m2
+
+    def compute_sheath_current_densities(
+        self,
+        current_a: float,
+        chamber: ChamberConditions | None = None,
+    ) -> tuple[float, float]:
+        """Return electrode and grounded current densities."""
+        chamber = chamber if chamber is not None else self.chamber
+        electrode_current_density = self.compute_current_density(
+            current_a=current_a,
+            area_m2=self.compute_electrode_area_m2(chamber),
+        )
+        grounded_current_density = self.compute_current_density(
+            current_a=current_a,
+            area_m2=self.compute_grounded_area_m2(chamber),
+        )
+        return electrode_current_density, grounded_current_density
 
     def compute_power_density(self, power: float, volume: float) -> float:
         """Return power density."""
@@ -990,21 +1068,34 @@ class PlasmaCalculator:
     def compute_plasma_sheath_capacitance_electrode(
             self,
             sheath_thickness_m: float,
-            chamber_radius_m: float,
+            electrode_radius_m: float,
             
         ) -> float:
-        return self.compute_plasma_sheath_capacitance(sheath_thickness_m) * (pi * chamber_radius_m * chamber_radius_m)
+        chamber = ChamberConditions(
+            chamber_radius_m=electrode_radius_m,
+            chamber_height_m=0.0,
+            electrode_radius_m=electrode_radius_m,
+        )
+        return (
+            self.compute_plasma_sheath_capacitance(sheath_thickness_m)
+            * self.compute_electrode_area_m2(chamber)
+        )
     
     def compute_plasma_sheath_capacitance_grounded(
             self,
             sheath_thickness_m: float,
+            electrode_radius_m: float,
             chamber_radius_m: float,
             chamber_height_m: float,
         ) -> float:
+        chamber = ChamberConditions(
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            electrode_radius_m=electrode_radius_m,
+        )
         return (
-                self.compute_plasma_sheath_capacitance(sheath_thickness_m) 
-                * (pi * chamber_radius_m * chamber_radius_m 
-                + 2 * pi * chamber_radius_m * chamber_height_m)
+                self.compute_plasma_sheath_capacitance(sheath_thickness_m)
+                * self.compute_grounded_area_m2(chamber)
         )
     
     def compute_electron_velocity(
@@ -1038,9 +1129,8 @@ class PlasmaCalculator:
                ) **(2/3)
             ) 
         )
-    
-    def compute_plasma_sheath_resistance_electrode(
-            
+
+    def compute_plasma_sheath_conductance_electrode(
             self,
             sheath_thickness_m: float,
             pressure_torr: float,
@@ -1050,13 +1140,61 @@ class PlasmaCalculator:
             chamber_radius_m: float,
             chamber_height_m: float,
         ) -> float:
-        return 1 /  (pi * chamber_radius_m * chamber_radius_m * self.compute_plasma_sheath_conductance(
+        """Return electrode sheath conductance per unit area."""
+        return self.compute_plasma_sheath_conductance(
+            sheath_thickness_m=sheath_thickness_m,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=RF_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+
+    def compute_plasma_sheath_conductance_grounded(
+            self,
+            sheath_thickness_m: float,
+            pressure_torr: float,
+            electron_temperature_ev: float,
+            RF_power: float,
+            sheath_voltage: float,
+            chamber_radius_m: float,
+            chamber_height_m: float,
+        ) -> float:
+        """Return grounded sheath conductance per unit area."""
+        return self.compute_plasma_sheath_conductance(
+            sheath_thickness_m=sheath_thickness_m,
+            pressure_torr=pressure_torr,
+            electron_temperature_ev=electron_temperature_ev,
+            RF_power=RF_power,
+            sheath_voltage=sheath_voltage,
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+        )
+    
+    def compute_plasma_sheath_resistance_electrode(
+            
+            self,
+            sheath_thickness_m: float,
+            pressure_torr: float,
+            electron_temperature_ev: float,
+            RF_power: float,
+            sheath_voltage: float,
+            electrode_radius_m: float,
+            chamber_height_m: float,
+        ) -> float:
+        chamber = ChamberConditions(
+            chamber_radius_m=electrode_radius_m,
+            chamber_height_m=chamber_height_m,
+            electrode_radius_m=electrode_radius_m,
+        )
+        return 1 /  (self.compute_electrode_area_m2(chamber) * self.compute_plasma_sheath_conductance_electrode(
             sheath_thickness_m,
             pressure_torr,
             electron_temperature_ev,
             RF_power,
             sheath_voltage,
-            chamber_radius_m,
+            electrode_radius_m,
             chamber_height_m
             )
         )
@@ -1069,21 +1207,26 @@ class PlasmaCalculator:
             electron_temperature_ev: float,
             RF_power: float,
             sheath_voltage: float,
+            electrode_radius_m: float,
             chamber_radius_m: float,
             chamber_height_m: float,
         ) -> float:
+        chamber = ChamberConditions(
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            electrode_radius_m=electrode_radius_m,
+        )
         return (1 
             / (
-                (pi * chamber_radius_m * chamber_radius_m 
-                + 2 * pi * chamber_radius_m * chamber_height_m) 
-                * self.compute_plasma_sheath_conductance(
-                sheath_thickness_m,
-                pressure_torr,
-                electron_temperature_ev,
-                RF_power,
-                sheath_voltage,
-                chamber_radius_m,
-                chamber_height_m
+                self.compute_grounded_area_m2(chamber)
+                * self.compute_plasma_sheath_conductance_grounded(
+                    sheath_thickness_m,
+                    pressure_torr,
+                    electron_temperature_ev,
+                    RF_power,
+                    sheath_voltage,
+                    chamber_radius_m,
+                    chamber_height_m
                 )
             )
         )
@@ -1137,3 +1280,51 @@ class PlasmaCalculator:
             ) ** 0.5
             * density_ratio
         )
+    
+    def compute_plasma_voltage_bias(
+        self,
+        current_density_a_per_m2: float,
+        rf_frequency_hz: float,
+        pressure_torr: float,
+        electron_temperature_ev: float,
+        rf_power: float,
+        sheath_length_m: float,
+        electrode_radius_m: float,
+        chamber_radius_m: float,
+        chamber_height_m: float,
+        rf_voltage: float,
+    ) -> float:
+        """Return sheath voltage bias from current density and plasma properties."""
+        if current_density_a_per_m2 <= 0:
+            raise ValueError("Current density must be positive.")
+        if rf_frequency_hz <= 0:
+            raise ValueError("RF frequency must be positive.")
+        if pressure_torr <= 0:
+            raise ValueError("Pressure must be positive.")
+
+        sheath_voltage = self.sheath_voltage
+        plasma_density = self.compute_plasma_density(
+            electron_temperature_ev,
+            rf_power,
+            sheath_voltage,
+            chamber_radius_m,
+            chamber_height_m,
+        )
+
+        chamber = ChamberConditions(
+            chamber_radius_m=chamber_radius_m,
+            chamber_height_m=chamber_height_m,
+            pressure_torr=pressure_torr,
+            electrode_radius_m=electrode_radius_m,
+        )
+        electrode_area_m2 = self.compute_electrode_area_m2(chamber)
+        grounded_area_m2 = self.compute_grounded_area_m2(chamber)
+        area_ratio = (
+            (plasma_density * electrode_area_m2)
+            - (plasma_density * grounded_area_m2)
+        ) / (
+            (plasma_density * electrode_area_m2)
+            + (plasma_density * grounded_area_m2)
+        )
+
+        return rf_voltage * math.sin((pi / 2) * area_ratio)

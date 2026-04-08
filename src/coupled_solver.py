@@ -30,8 +30,8 @@ def solve_self_consistent_plasma_circuit(
     damping: float = 0.5,
 ) -> SelfConsistentPlasmaCircuitResult:
     """Iterate until plasma sheath lengths are consistent with circuit current density."""
-    if chamber.electrode_area_m2 is None or chamber.electrode_area_m2 <= 0:
-        raise ValueError("Electrode area must be set to compute current density.")
+    if plasma.compute_electrode_area_m2(chamber) <= 0:
+        raise ValueError("Electrode area must be positive to compute current density.")
     if max_iterations <= 0:
         raise ValueError("max_iterations must be positive.")
     if not (0 < damping <= 1):
@@ -62,19 +62,13 @@ def solve_self_consistent_plasma_circuit(
         )
         circuit_result = simulator.compute_plasma_circuit_response()
 
-        current_density_a_per_m2 = (
-            abs(circuit_result.src_node_current_rms) / chamber.electrode_area_m2
+        current_density_electrode, current_density_grounded = (
+            plasma.compute_sheath_current_densities(
+                current_a=circuit_result.src_node_current_rms,
+                chamber=chamber,
+            )
         )
-        
-        # Calculate electrode and grounded sheath lengths separately
-        # using current density appropriate to each surface area
-        current_density_electrode = (
-            abs(circuit_result.src_node_current_rms) / chamber.electrode_area_m2
-        )
-        current_density_grounded = (
-            abs(circuit_result.src_node_current_rms) / chamber.grounded_area_m2
-        )
-        
+        current_density_a_per_m2 = current_density_electrode
         raw_sheath_length_electrode_m = plasma.compute_plasma_sheath_length_electrode(
             current_density_a_per_m2=current_density_electrode,
             rf_frequency_hz=working_conditions.RF_frequency,
@@ -95,8 +89,6 @@ def solve_self_consistent_plasma_circuit(
             chamber_radius_m=chamber.chamber_radius_m,
             chamber_height_m=chamber.chamber_height_m,
         )
-        
-        # Apply damping to both sheath lengths
         updated_sheath_length_electrode_m = (
             (1 - damping) * working_conditions.sheath_length_electrode_m
             + damping * raw_sheath_length_electrode_m
@@ -105,12 +97,9 @@ def solve_self_consistent_plasma_circuit(
             (1 - damping) * working_conditions.sheath_length_grounded_m
             + damping * raw_sheath_length_grounded_m
         )
-        
-        # Track relative change in electrode sheath length
         last_relative_change = abs(
             updated_sheath_length_electrode_m - working_conditions.sheath_length_electrode_m
         ) / max(abs(working_conditions.sheath_length_electrode_m), 1e-30)
-        
         working_conditions = replace(
             working_conditions,
             sheath_length_electrode_m=updated_sheath_length_electrode_m,
@@ -142,11 +131,11 @@ def solve_self_consistent_plasma_circuit(
         target_power_w=working_conditions.RF_power,
     )
     final_circuit_result = simulator.compute_plasma_circuit_response()
-    final_current_density_electrode = (
-        abs(final_circuit_result.src_node_current_rms) / chamber.electrode_area_m2
-    )
-    final_current_density_grounded = (
-        abs(final_circuit_result.src_node_current_rms) / chamber.grounded_area_m2
+    final_current_density_electrode, final_current_density_grounded = (
+        plasma.compute_sheath_current_densities(
+            current_a=final_circuit_result.src_node_current_rms,
+            chamber=chamber,
+        )
     )
     working_conditions.Current_density = final_current_density_electrode
 
