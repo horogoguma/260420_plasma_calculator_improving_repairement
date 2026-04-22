@@ -1,6 +1,6 @@
 """Plasma calculation primitives and default reactor conditions."""
 
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from math import pi
 import math
 
@@ -22,7 +22,12 @@ class BasicConstants:
 
 @dataclass(frozen=True)
 class ChamberConditions:
-    """Geometry and neutral-gas conditions for the reactor."""
+    """Geometry and neutral-gas conditions for the reactor.
+
+    Geometry inputs may be provided in meters or millimeters.
+    Internally they are stored in meters so the rest of the solver
+    can keep using consistent SI units.
+    """
 
     chamber_height_m: float | None = None
     chamber_radius_m: float  | None = None
@@ -31,12 +36,51 @@ class ChamberConditions:
     electrode_radius_m: float | None = None
     electrode_area_m2: float | None = None
     grounded_area_m2: float | None = None
+    chamber_height_mm_input: InitVar[float | None] = None
+    chamber_radius_mm_input: InitVar[float | None] = None
+    electrode_radius_mm_input: InitVar[float | None] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        chamber_height_mm_input: float | None,
+        chamber_radius_mm_input: float | None,
+        electrode_radius_mm_input: float | None,
+    ) -> None:
+        if chamber_height_mm_input is not None:
+            if chamber_height_mm_input <= 0:
+                raise ValueError("Chamber height must be positive.")
+            if self.chamber_height_m is None:
+                object.__setattr__(
+                    self,
+                    "chamber_height_m",
+                    chamber_height_mm_input * MM_TO_M,
+                )
+
+        if chamber_radius_mm_input is not None:
+            if chamber_radius_mm_input <= 0:
+                raise ValueError("Chamber radius must be positive.")
+            if self.chamber_radius_m is None:
+                object.__setattr__(
+                    self,
+                    "chamber_radius_m",
+                    chamber_radius_mm_input * MM_TO_M,
+                )
+
+        if electrode_radius_mm_input is not None:
+            if electrode_radius_mm_input <= 0:
+                raise ValueError("Electrode radius must be positive.")
+            if self.electrode_radius_m is None:
+                object.__setattr__(
+                    self,
+                    "electrode_radius_m",
+                    electrode_radius_mm_input * MM_TO_M,
+                )
+
         if self.electrode_radius_m is not None and self.electrode_radius_m <= 0:
             raise ValueError("Electrode radius must be positive.")
         if (
             self.electrode_radius_m is not None
+            and self.chamber_radius_m is not None
             and self.electrode_radius_m > self.chamber_radius_m
         ):
             raise ValueError("Electrode radius cannot exceed chamber radius.")
@@ -50,12 +94,41 @@ class ChamberConditions:
         return self.chamber_radius_m / MM_TO_M
 
     @property
+    def electrode_radius_mm(self) -> float | None:
+        if self.electrode_radius_m is None:
+            return None
+        return self.electrode_radius_m / MM_TO_M
+
+    @property
     def chamber_volume_m3(self) -> float:
         return pi * (self.chamber_radius_m**2) * self.chamber_height_m
 
     @property
     def pressure_pa(self) -> float:
         return self.pressure_torr * TORR_TO_PA
+
+    @classmethod
+    def from_mm(
+        cls,
+        *,
+        chamber_height_mm: float,
+        chamber_radius_mm: float,
+        pressure_torr: float,
+        temperature_k: float,
+        electrode_radius_mm: float | None = None,
+        electrode_area_m2: float | None = None,
+        grounded_area_m2: float | None = None,
+    ) -> "ChamberConditions":
+        """Build chamber conditions from millimeter-based geometry inputs."""
+        return cls(
+            chamber_height_mm_input=chamber_height_mm,
+            chamber_radius_mm_input=chamber_radius_mm,
+            pressure_torr=pressure_torr,
+            temperature_k=temperature_k,
+            electrode_radius_mm_input=electrode_radius_mm,
+            electrode_area_m2=electrode_area_m2,
+            grounded_area_m2=grounded_area_m2,
+        )
 
 
 @dataclass
@@ -70,6 +143,7 @@ class PlasmaConditions:
     RF_frequency: int = 12_900_000
     Current_density: float = 100.0
     rf_voltage: float = 0.0
+    absorbed_bulk_power_w: float | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +257,11 @@ class PlasmaCalculator:
         chamber_height_m = chamber.chamber_height_m
         sheath_voltage = conditions.sheath_voltage
         rf_power = conditions.RF_power
+        absorbed_bulk_power_w = (
+            conditions.absorbed_bulk_power_w
+            if conditions.absorbed_bulk_power_w is not None
+            else rf_power
+        )
         rf_frequency = conditions.RF_frequency
         
         sheath_length_electrode_m = conditions.sheath_length_electrode_m
@@ -201,7 +280,7 @@ class PlasmaCalculator:
                 pressure_pa=pressure_pa,
                 temperature_k=temperature_k,
                 chamber_radius_m=chamber_radius_m,
-                chamber_height_m=chamber_height_m,
+                chamber_height_m=bulk_height_m,
             )
         )
         self.electron_temperature_ev = electron_temperature_ev
@@ -247,7 +326,7 @@ class PlasmaCalculator:
         )
         plasma_density = self.compute_plasma_density(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
             chamber_height_m=bulk_height_m,
@@ -262,14 +341,14 @@ class PlasmaCalculator:
         )
         plasma_angular_frequency = self.compute_plasma_angular_frequency(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
             chamber_height_m=bulk_height_m,
         )
         plasma_conductivity = self.compute_plasma_conductivity(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
@@ -279,7 +358,7 @@ class PlasmaCalculator:
         )
         plasma_relative_permittivity = self.compute_plasma_relative_permittivity(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
@@ -289,7 +368,7 @@ class PlasmaCalculator:
         )
         debye_length_m = self.compute_debye_length_m(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
             chamber_height_m=bulk_height_m,
@@ -297,7 +376,7 @@ class PlasmaCalculator:
 
         plasma_resistance = self.compute_plasma_resistance(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
@@ -309,7 +388,7 @@ class PlasmaCalculator:
         )
         plasma_coil_reactance = self.compute_plasma_coil_reactance(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
@@ -328,7 +407,7 @@ class PlasmaCalculator:
         )
         plasma_coil_henry = self.compute_plasma_coil_henry(
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             RF_frequency=rf_frequency,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
@@ -368,7 +447,7 @@ class PlasmaCalculator:
             sheath_thickness_m=sheath_length_electrode_m,
             pressure_torr=pressure_torr,
             electron_temperature_ev=electron_temperature_ev,
-            RF_power=rf_power,
+            RF_power=absorbed_bulk_power_w,
             sheath_voltage=sheath_voltage,
             chamber_radius_m=chamber_radius_m,
             chamber_height_m=chamber_height_m,
@@ -378,7 +457,7 @@ class PlasmaCalculator:
                 sheath_thickness_m=sheath_length_electrode_m,
                 pressure_torr=pressure_torr,
                 electron_temperature_ev=electron_temperature_ev,
-                RF_power=rf_power,
+                RF_power=absorbed_bulk_power_w,
                 sheath_voltage=sheath_voltage,
                 electrode_radius_m=electrode_radius_m,
                 chamber_height_m=chamber_height_m,
@@ -389,7 +468,7 @@ class PlasmaCalculator:
                 sheath_thickness_m=sheath_length_grounded_m,
                 pressure_torr=pressure_torr,
                 electron_temperature_ev=electron_temperature_ev,
-                RF_power=rf_power,
+                RF_power=absorbed_bulk_power_w,
                 sheath_voltage=sheath_voltage,
                 electrode_radius_m=electrode_radius_m,
                 chamber_radius_m=chamber_radius_m,
@@ -838,8 +917,7 @@ class PlasmaCalculator:
         )
         return (
             self.constants.vacuum_permittivity
-            * self.constants.boltzmann_constant
-            * 11600
+            * self.constants.electron_charge
             * electron_temperature_ev
             / (plasma_density * self.constants.electron_charge * self.constants.electron_charge)
         ) ** 0.5
@@ -1111,7 +1189,14 @@ class PlasmaCalculator:
         self,
         electron_temperature_ev: float
     ) -> float:
-        return ((8 * electron_temperature_ev) / (pi * self.constants.electron_mass)) ** 0.5
+        return (
+            (
+                8
+                * self.constants.electron_charge
+                * electron_temperature_ev
+            )
+            / (pi * self.constants.electron_mass)
+        ) ** 0.5
 
     def compute_plasma_sheath_conductance(
             self,

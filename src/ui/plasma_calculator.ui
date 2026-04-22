@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1358</width>
+    <height>512</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Plasma Calculator</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QWidget" name="">
+    <property name="geometry">
+     <rect>
+      <x>31</x>
+      <y>32</y>
+      <width>1301</width>
+      <height>397</height>
+     </rect>
+    </property>
+    <layout class="QVBoxLayout" name="verticalLayout_3">
+     <item>
+      <widget class="QSplitter" name="splitter">
+       <property name="orientation">
+        <enum>Qt::Orientation::Horizontal</enum>
+       </property>
+       <widget class="QWidget" name="">
+        <layout class="QVBoxLayout" name="verticalLayout_2">
+         <item>
+          <widget class="QLabel" name="inputsLabel">
+           <property name="text">
+            <string>inputsTitleLabel</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QFormLayout" name="formLayout">
+           <item row="0" column="0">
+            <widget class="QLabel" name="chamberHeightMmLabel">
+             <property name="text">
+              <string>Chamber height (mm)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QLineEdit" name="chamberHeightMmEdit"/>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="chamberRadiusMmLabel">
+             <property name="text">
+              <string>Chamber radius (mm)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QLineEdit" name="chamberRadiusMmEdit"/>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLabel" name="pressureTorrLabel">
+             <property name="text">
+              <string>Pressure (Torr)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QLineEdit" name="pressureTorrEdit"/>
+           </item>
+           <item row="3" column="0">
+            <widget class="QLabel" name="temperatureKLabel">
+             <property name="text">
+              <string>Temperature (K)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="1">
+            <widget class="QLineEdit" name="temperatureKEdit"/>
+           </item>
+           <item row="4" column="0">
+            <widget class="QLabel" name="electrodeRadiusMmLabel">
+             <property name="text">
+              <string>Electrode radius (mm)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="1">
+            <widget class="QLineEdit" name="electrodeRadiusMmEdit"/>
+           </item>
+           <item row="5" column="0">
+            <widget class="QLabel" name="initialElectronTemperatureEvLabel">
+             <property name="text">
+              <string>Initial electron temperature (eV)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="1">
+            <widget class="QLineEdit" name="initialElectronTemperatureEvEdit"/>
+           </item>
+           <item row="6" column="0">
+            <widget class="QLabel" name="initialSheathVoltageLabel">
+             <property name="text">
+              <string>Initial sheath voltage (V)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="1">
+            <widget class="QLineEdit" name="initialSheathVoltageEdit"/>
+           </item>
+           <item row="7" column="0">
+            <widget class="QLabel" name="initialSheathLengthElectrodeMmLabel">
+             <property name="text">
+              <string>Initial electrode sheath length (mm)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="7" column="1">
+            <widget class="QLineEdit" name="initialSheathLengthElectrodeMmEdit"/>
+           </item>
+           <item row="8" column="0">
+            <widget class="QLabel" name="initialSheathLengthGroundedMmLabel">
+             <property name="text">
+              <string>Initial grounded sheath length (mm)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="8" column="1">
+            <widget class="QLineEdit" name="initialSheathLengthGroundedMmEdit"/>
+           </item>
+           <item row="9" column="0">
+            <widget class="QLabel" name="rfPowerLabel">
+             <property name="text">
+              <string>RF power (W)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="9" column="1">
+            <widget class="QLineEdit" name="rfPowerEdit"/>
+           </item>
+           <item row="10" column="0">
+            <widget class="QLabel" name="rfFrequencyLabel">
+             <property name="text">
+              <string>RF frequency (Hz)</string>
+             </property>
+            </widget>
+           </item>
+           <item row="10" column="1">
+            <widget class="QLineEdit" name="rfFrequencyEdit"/>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+       <widget class="QWidget" name="">
+        <layout class="QVBoxLayout" name="verticalLayout">
+         <item>
+          <widget class="QLabel" name="resultsTitleLabel">
+           <property name="text">
+            <string>resultsTitleLabel</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPlainTextEdit" name="resultTextEdit">
+           <property name="readOnly">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <item>
+        <widget class="QPushButton" name="runCalculationButton">
+         <property name="text">
+          <string>Run calculation</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="resetDefaultsButton">
+         <property name="text">
+          <string>Reset defaults</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1358</width>
+     <height>27</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

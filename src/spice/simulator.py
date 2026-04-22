@@ -5,19 +5,21 @@
 나중에 GUI나 플라즈마 계산 쪽에서 이 객체를 호출하게 된다.
 """
 
-# Base.py를 import 하면 환경변수가 셋업된다
-# (PySpice가 동작하는 데 필요한 ngspice 경로 설정)
-# 현재 패키지 구조에서는 src.Base를 불러오면 된다.
-from .. import Base  # noqa: F401
+from ..infra import initialize_pyspice
 
 from dataclasses import dataclass
 from math import pi
+
+import numpy as np
 
 import PySpice.Logging.Logging as Logging
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Unit import *
 
 logger = Logging.setup_logging()
+initialize_pyspice()
+
+SHEATH_DC_BLEED_RESISTANCE_OHM = 1e12
 
 
 @dataclass(frozen=True)
@@ -57,13 +59,40 @@ class PlasmaCircuitResult:
     average_power_w: float
 
 
+@dataclass(frozen=True)
+class TransientMeasurementSettings:
+    """Transient sampling settings used for steady-state power measurement."""
+
+    warmup_cycles: int = 120
+    measurement_cycles: int = 10
+    points_per_cycle: int = 80
+
+    def __post_init__(self) -> None:
+        if self.warmup_cycles < 0:
+            raise ValueError("warmup_cycles must be zero or positive.")
+        if self.measurement_cycles <= 0:
+            raise ValueError("measurement_cycles must be positive.")
+        if self.points_per_cycle <= 0:
+            raise ValueError("points_per_cycle must be positive.")
+
+
 class SpiceSimulator:
-    def __init__(self):
+    def __init__(
+        self,
+        measurement_settings: TransientMeasurementSettings | None = None,
+    ):
         # 초기 상태의 회로 객체
         self.circuit = None
         self._plasma_params = None
         self._target_power_w = None
         self._source_voltage_peak_v = None
+        self._power_relative_tolerance = 1e-4
+        self._power_match_max_iterations = 12
+        self._measurement_settings = (
+            measurement_settings
+            if measurement_settings is not None
+            else TransientMeasurementSettings()
+        )
 
     def build_plasma_equivalent_circuit(
         self,
@@ -73,8 +102,8 @@ class SpiceSimulator:
         """플라즈마 bulk + sheath 등가회로를 생성한다.
 
         토폴로지:
-        source -> electrode sheath(R||C) -> bulk plasma(R-L-C 직렬)
-        -> grounded sheath(R||C) -> ground
+        source -> electrode sheath(R-C 직렬) -> bulk plasma(R-L 직렬 // C)
+        -> grounded sheath(C-R 직렬) -> ground
         """
         self._plasma_params = params
         self._target_power_w = target_power_w
@@ -85,6 +114,16 @@ class SpiceSimulator:
         )
         source_voltage_peak_v = source_voltage_rms_v * (2 ** 0.5)
         self._source_voltage_peak_v = source_voltage_peak_v
+        self._build_circuit_for_source_voltage(
+            params=params,
+            source_voltage_peak_v=source_voltage_peak_v,
+        )
+
+    def _build_circuit_for_source_voltage(
+        self,
+        params: PlasmaCircuitParameters,
+        source_voltage_peak_v: float,
+    ) -> None:
         self.circuit = Circuit("PlasmaEquivalent")
         self.circuit.SinusoidalVoltageSource(
             "input",
@@ -95,16 +134,22 @@ class SpiceSimulator:
         )
 
         self.circuit.R(
-            "sheath_e",
+            "sheath_e_r",
             "src",
-            "node_e",
+            "node_e_r",
             params.plasma_sheath_resistance_electrode @ u_Ohm,
         )
         self.circuit.C(
-            "sheath_e",
-            "src",
+            "sheath_e_c",
+            "node_e_r",
             "node_e",
             params.plasma_sheath_capacitance_electrode @ u_F,
+        )
+        self.circuit.R(
+            "sheath_e_bleed",
+            "node_e_r",
+            "node_e",
+            SHEATH_DC_BLEED_RESISTANCE_OHM @ u_Ohm,
         )
         self.circuit.R(
             "bulk_r",
@@ -124,21 +169,27 @@ class SpiceSimulator:
             "node_g",
             params.plasma_cap_farad @ u_F,
         )
-        self.circuit.R(
-            "sheath_g",
+        self.circuit.C(
+            "sheath_g_c",
             "node_g",
+            "node_g_r",
+            params.plasma_sheath_capacitance_grounded @ u_F,
+        )
+        self.circuit.R(
+            "sheath_g_bleed",
+            "node_g",
+            "node_g_r",
+            SHEATH_DC_BLEED_RESISTANCE_OHM @ u_Ohm,
+        )
+        self.circuit.R(
+            "sheath_g_r",
+            "node_g_r",
             self.circuit.gnd,
             params.plasma_sheath_resistance_grounded @ u_Ohm,
         )
-        self.circuit.C(
-            "sheath_g",
-            "node_g",
-            self.circuit.gnd,
-            params.plasma_sheath_capacitance_grounded @ u_F,
-        )
 
     def compute_plasma_circuit_response(self) -> PlasmaCircuitResult:
-        """구성된 플라즈마 등가회로에서 전압, 전류, 전력을 계산한다."""
+        """Match target power, then return the steady-state circuit response."""
         if self.circuit is None or self._plasma_params is None:
             raise ValueError("Plasma equivalent circuit must be built first.")
         if self._source_voltage_peak_v is None:
@@ -147,68 +198,137 @@ class SpiceSimulator:
             raise ValueError("Target power must be set before analysis.")
 
         params = self._plasma_params
-        equivalent = self._compute_equivalent_impedances(params)
-        source_voltage_peak = complex(self._source_voltage_peak_v, 0.0)
+        target_power_w = self._target_power_w
+        source_voltage_peak_v = self._source_voltage_peak_v
+        latest_result: PlasmaCircuitResult | None = None
+
+        for _ in range(self._power_match_max_iterations):
+            latest_result = self._compute_response_for_source_voltage(
+                params=params,
+                source_voltage_peak_v=source_voltage_peak_v,
+            )
+            measured_power_w = latest_result.total_resistor_power_w
+            if measured_power_w <= 0:
+                raise ValueError("Measured dissipated resistor power must be positive.")
+
+            relative_error = abs(measured_power_w - target_power_w) / target_power_w
+            if relative_error <= self._power_relative_tolerance:
+                self._source_voltage_peak_v = source_voltage_peak_v
+                return latest_result
+
+            source_voltage_peak_v *= (target_power_w / measured_power_w) ** 0.5
+
+        if latest_result is None:
+            raise RuntimeError("Power-matching loop did not produce a circuit result.")
+
+        self._source_voltage_peak_v = source_voltage_peak_v
+        return self._compute_response_for_source_voltage(
+            params=params,
+            source_voltage_peak_v=source_voltage_peak_v,
+        )
+
+    def _compute_response_for_source_voltage(
+        self,
+        params: PlasmaCircuitParameters,
+        source_voltage_peak_v: float,
+    ) -> PlasmaCircuitResult:
+        self._build_circuit_for_source_voltage(
+            params=params,
+            source_voltage_peak_v=source_voltage_peak_v,
+        )
+
+        simulator = self.circuit.simulator(temperature=25, nominal_temperature=25)
+        steady_state = self._extract_steady_state_window(
+            simulator=simulator,
+            frequency_hz=params.rf_frequency_hz,
+            settings=self._measurement_settings,
+        )
+        omega = 2 * pi * params.rf_frequency_hz
+
+        source_voltage_peak = self._compute_peak_phasor(
+            steady_state["time"],
+            steady_state["source_voltage"],
+            params.rf_frequency_hz,
+        )
         source_voltage_rms = source_voltage_peak / (2 ** 0.5)
-        total_impedance = equivalent["total_impedance"]
 
-        if total_impedance == 0:
-            raise ValueError("Total plasma impedance must be non-zero.")
+        node_e_peak = self._compute_peak_phasor(
+            steady_state["time"],
+            steady_state["node_e_voltage"],
+            params.rf_frequency_hz,
+        )
+        node_g_peak = self._compute_peak_phasor(
+            steady_state["time"],
+            steady_state["node_g_voltage"],
+            params.rf_frequency_hz,
+        )
+        node_e_rms = node_e_peak / (2 ** 0.5)
+        node_g_rms = node_g_peak / (2 ** 0.5)
 
-        source_current_rms = source_voltage_rms / total_impedance
-        bulk_voltage_rms = source_current_rms * equivalent["bulk_plasma_impedance"]
-        grounded_sheath_voltage_rms = (
-            source_current_rms * equivalent["grounded_sheath_impedance"]
+        electrode_sheath_voltage_rms = source_voltage_rms - node_e_rms
+        bulk_voltage_rms = node_e_rms - node_g_rms
+        grounded_sheath_voltage_rms = node_g_rms
+
+        electrode_cap_impedance = self._capacitive_impedance(
+            params.plasma_sheath_capacitance_electrode,
+            omega,
+        )
+        grounded_cap_impedance = self._capacitive_impedance(
+            params.plasma_sheath_capacitance_grounded,
+            omega,
+        )
+        electrode_sheath_series_impedance = (
+            complex(params.plasma_sheath_resistance_electrode, 0.0)
+            + electrode_cap_impedance
+        )
+        grounded_sheath_series_impedance = (
+            grounded_cap_impedance
+            + complex(params.plasma_sheath_resistance_grounded, 0.0)
         )
         bulk_series_impedance = (
             complex(params.plasma_resistance, 0.0)
-            + self._inductive_impedance(
-                params.plasma_coil_henry,
-                equivalent["angular_frequency"],
-            )
+            + self._inductive_impedance(params.plasma_coil_henry, omega)
         )
-        electrode_sheath_voltage_rms = (
-            source_current_rms * equivalent["electrode_sheath_impedance"]
-        )
-        src_node_resistor_current_rms = electrode_sheath_voltage_rms / complex(
-            params.plasma_sheath_resistance_electrode,
-            0.0,
-        )
-        src_node_capacitor_current_rms = electrode_sheath_voltage_rms / (
-            self._capacitive_impedance(
-                params.plasma_sheath_capacitance_electrode,
-                equivalent["angular_frequency"],
-            )
-        )
-        src_node_current_rms = (
-            src_node_resistor_current_rms + src_node_capacitor_current_rms
-        )
+
+        src_node_current_rms = electrode_sheath_voltage_rms / electrode_sheath_series_impedance
+        src_node_resistor_current_rms = src_node_current_rms
+        src_node_capacitor_current_rms = src_node_current_rms
+        source_current_rms = src_node_current_rms
+        if source_current_rms == 0:
+            raise ValueError("Source current must be non-zero.")
         bulk_series_current_rms = bulk_voltage_rms / bulk_series_impedance
-        grounded_sheath_resistor_current_rms = grounded_sheath_voltage_rms / complex(
-            params.plasma_sheath_resistance_grounded,
-            0.0,
+        grounded_sheath_current_rms = grounded_sheath_voltage_rms / grounded_sheath_series_impedance
+
+        electrode_sheath_resistor_power_w = float(
+            np.mean(
+                (steady_state["electrode_sheath_series_current"] ** 2)
+                * params.plasma_sheath_resistance_electrode
+            )
         )
-        electrode_sheath_resistor_power_w = (
-            electrode_sheath_voltage_rms * src_node_resistor_current_rms.conjugate()
-        ).real
-        plasma_resistance_power_w = (
-            (
-                bulk_series_current_rms * complex(params.plasma_resistance, 0.0)
-            ) * bulk_series_current_rms.conjugate()
-        ).real
-        grounded_sheath_resistor_power_w = (
-            grounded_sheath_voltage_rms
-            * grounded_sheath_resistor_current_rms.conjugate()
-        ).real
+        plasma_resistance_power_w = float(
+            np.mean((steady_state["bulk_series_current"] ** 2) * params.plasma_resistance)
+        )
+        grounded_sheath_resistor_power_w = float(
+            np.mean(
+                (steady_state["grounded_sheath_series_current"] ** 2)
+                * params.plasma_sheath_resistance_grounded
+            )
+        )
         total_resistor_power_w = (
             electrode_sheath_resistor_power_w
             + plasma_resistance_power_w
             + grounded_sheath_resistor_power_w
         )
-        average_power = (source_voltage_rms * source_current_rms.conjugate()).real
+        # Report the dissipated real power that the target-power loop matches.
+        average_power_w = total_resistor_power_w
+
+        electrode_sheath_impedance = electrode_sheath_voltage_rms / source_current_rms
+        bulk_plasma_impedance = bulk_voltage_rms / source_current_rms
+        grounded_sheath_impedance = grounded_sheath_voltage_rms / source_current_rms
+        total_impedance = source_voltage_rms / source_current_rms
 
         return PlasmaCircuitResult(
-            angular_frequency=equivalent["angular_frequency"],
+            angular_frequency=omega,
             target_power_w=self._target_power_w,
             source_voltage_rms=source_voltage_rms,
             source_voltage_peak=source_voltage_peak,
@@ -216,28 +336,87 @@ class SpiceSimulator:
             src_node_current_rms=src_node_current_rms,
             src_node_resistor_current_rms=src_node_resistor_current_rms,
             src_node_capacitor_current_rms=src_node_capacitor_current_rms,
-            electrode_sheath_impedance=equivalent["electrode_sheath_impedance"],
-            bulk_plasma_impedance=equivalent["bulk_plasma_impedance"],
-            grounded_sheath_impedance=equivalent["grounded_sheath_impedance"],
+            electrode_sheath_impedance=electrode_sheath_impedance,
+            bulk_plasma_impedance=bulk_plasma_impedance,
+            grounded_sheath_impedance=grounded_sheath_impedance,
             total_impedance=total_impedance,
             electrode_sheath_resistor_power_w=electrode_sheath_resistor_power_w,
             plasma_resistance_power_w=plasma_resistance_power_w,
             grounded_sheath_resistor_power_w=grounded_sheath_resistor_power_w,
             total_resistor_power_w=total_resistor_power_w,
-            average_power_w=average_power,
+            average_power_w=average_power_w,
         )
+
+    def _extract_steady_state_window(
+        self,
+        simulator,
+        frequency_hz: float,
+        settings: TransientMeasurementSettings,
+    ) -> dict[str, np.ndarray]:
+        period_s = 1 / frequency_hz
+        step_time_s = period_s / settings.points_per_cycle
+        measurement_start_s = settings.warmup_cycles * period_s
+        measurement_stop_s = (
+            settings.warmup_cycles + settings.measurement_cycles
+        ) * period_s
+        analysis = simulator.transient(
+            step_time=step_time_s,
+            end_time=measurement_stop_s,
+        )
+        time = np.array(analysis.time, dtype=float)
+        mask = time >= measurement_start_s
+        if not np.any(mask):
+            raise ValueError("Failed to capture a steady-state transient window.")
+        source_voltage = np.array(analysis.nodes["src"], dtype=float)[mask]
+        node_e_voltage = np.array(analysis.nodes["node_e"], dtype=float)[mask]
+        node_e_r_voltage = np.array(analysis.nodes["node_e_r"], dtype=float)[mask]
+        node_g_voltage = np.array(analysis.nodes["node_g"], dtype=float)[mask]
+        node_g_r_voltage = np.array(analysis.nodes["node_g_r"], dtype=float)[mask]
+        return {
+            "time": time[mask],
+            "source_voltage": source_voltage,
+            # Negate the source branch current so positive power means
+            # power delivered from the RF source into the plasma circuit.
+            "source_current": -np.array(analysis.branches["vinput"], dtype=float)[mask],
+            "node_e_voltage": node_e_voltage,
+            "node_e_r_voltage": node_e_r_voltage,
+            "node_g_voltage": node_g_voltage,
+            "node_g_r_voltage": node_g_r_voltage,
+            "electrode_sheath_voltage": source_voltage - node_e_voltage,
+            "grounded_sheath_voltage": node_g_voltage,
+            "electrode_sheath_series_current": (
+                (source_voltage - node_e_r_voltage)
+                / self._plasma_params.plasma_sheath_resistance_electrode
+            ),
+            "grounded_sheath_series_current": (
+                node_g_r_voltage
+                / self._plasma_params.plasma_sheath_resistance_grounded
+            ),
+            # The bulk resistor and inductor are in series, so the inductor
+            # branch current is also the resistor current.
+            "bulk_series_current": np.array(analysis.branches["lbulk_l"], dtype=float)[mask],
+        }
+
+    def _compute_peak_phasor(
+        self,
+        time_s: np.ndarray,
+        waveform: np.ndarray,
+        frequency_hz: float,
+    ) -> complex:
+        omega = 2 * pi * frequency_hz
+        return complex(2 * np.mean(waveform * np.exp(-1j * omega * time_s)))
 
     def _compute_equivalent_impedances(
         self,
         params: PlasmaCircuitParameters,
     ) -> dict[str, float | complex]:
         omega = 2 * pi * params.rf_frequency_hz
-        electrode_sheath_impedance = self._parallel_impedance(
-            params.plasma_sheath_resistance_electrode,
-            self._capacitive_impedance(
+        electrode_sheath_impedance = (
+            complex(params.plasma_sheath_resistance_electrode, 0.0)
+            + self._capacitive_impedance(
                 params.plasma_sheath_capacitance_electrode,
                 omega,
-            ),
+            )
         )
         bulk_series_impedance = (
             complex(params.plasma_resistance, 0.0)
@@ -251,12 +430,12 @@ class SpiceSimulator:
             bulk_series_impedance,
             bulk_capacitive_impedance,
         )
-        grounded_sheath_impedance = self._parallel_impedance(
-            params.plasma_sheath_resistance_grounded,
+        grounded_sheath_impedance = (
             self._capacitive_impedance(
                 params.plasma_sheath_capacitance_grounded,
                 omega,
-            ),
+            )
+            + complex(params.plasma_sheath_resistance_grounded, 0.0)
         )
         total_impedance = (
             electrode_sheath_impedance
